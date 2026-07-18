@@ -46,12 +46,22 @@ def snapshot_to_finding(snap: WorkspaceSnapshot) -> dict:
     lines += ["", f"*Captured {snap.captured_at[:19].replace('T', ' ')} UTC — trigger: {snap.trigger}*"]
 
     title = _derive_title(snap)
+    metadata = {
+        k: v
+        for k, v in {
+            "hypothesis": snap.hypothesis,
+            "next_action": snap.next_action,
+            "thread_id": snap.thread_id,
+        }.items()
+        if v
+    }
     return {
         "title": title[:120],
         "content": "\n".join(lines),
         "category": "snapshot",
         "tags": ["snapshot", snap.trigger],
         "provenance": [{"source": "br8n-vscode", "trigger": snap.trigger, "path": snap.project_path}],
+        "metadata": metadata or None,
     }
 
 

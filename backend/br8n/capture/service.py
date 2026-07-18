@@ -42,6 +42,7 @@ async def persist_snapshot(ctx: TenantContext, snap: WorkspaceSnapshot) -> str:
         "confidence": 1.0,
         "tags": payload["tags"],
         "provenance": payload["provenance"],
+        "metadata": payload["metadata"],
         "embedding": embedding,
     }
     [finding_id] = await get_store(ctx.access_token).insert_findings([row])

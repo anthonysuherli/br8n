@@ -37,3 +37,11 @@ class WorkspaceSnapshot:
     # The wedge: the developer's one-line current hypothesis.
     # None means the user skipped the prompt (still valuable as a state snapshot).
     hypothesis: str | None = None
+
+    # One concrete ~two-minute step future-you should do first. Optional; the
+    # capture skill infers it when the user doesn't state one.
+    next_action: str | None = None
+
+    # Stable thread identity (minted by the activity KG on first task-node
+    # creation; carried on later captures to converge writes on one thread).
+    thread_id: str | None = None
