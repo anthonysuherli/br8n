@@ -9,7 +9,7 @@ from xml.etree import ElementTree as ET
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from br8n.agent.resume import resume_preamble
+from br8n.agent.resume import latest_next_action, resume_preamble
 from br8n.agent.state import Principal
 from br8n.api.auth import require_principal
 from br8n.knowledge_graph.activity import activity_rollup
@@ -53,6 +53,8 @@ class ResumeCardJSON(BaseModel):
     kb: str
     snapshot_count: int
     hypothesis: str | None = None
+    next_action: str | None = None
+    thread_id: str | None = None
     snapshots: list[ResumeSnapshot] = []
     synopsis: list[SynopsisEntry] = []
     activity: list[dict] = []
@@ -148,7 +150,11 @@ def _assemble_json(
         ResumeSnapshot(id=f["id"], title=f.get("title") or "", captured_at=f.get("created_at") or "")
         for f in snaps
     ]
-    hypothesis = _hypothesis_from_title(snaps[0].get("title") or "") if snaps else None
+    meta0 = (snaps[0].get("metadata") or {}) if snaps else {}
+    hypothesis = meta0.get("hypothesis") or (
+        _hypothesis_from_title(snaps[0].get("title") or "") if snaps else None
+    )
+    next_action, thread_id = latest_next_action(store, kb_id)
 
     syn_row = store.load_synopsis(kb_id) or {}
     synopsis = [
@@ -162,6 +168,8 @@ def _assemble_json(
         kb=kb,
         snapshot_count=snapshot_count,
         hypothesis=hypothesis,
+        next_action=next_action,
+        thread_id=thread_id,
         snapshots=snapshots,
         synopsis=synopsis,
         activity=activity,

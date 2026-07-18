@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from xml.sax.saxutils import escape
 
-from br8n.agent.resume import resume_preamble
+from br8n.agent.resume import latest_next_action, resume_preamble
 
 _MAX_SNAPSHOTS = 3
 
@@ -35,6 +35,9 @@ async def build_session_primer(project: str, kb: str, query: str | None) -> str 
         return None
 
     parts = [res.preamble]
+    next_action, _tid = latest_next_action(res.store, res.ctx.kb_id)
+    if next_action:
+        parts.append(f"<next-action>{escape(next_action.strip()[:200])}</next-action>")
     # Truncate the raw title, THEN escape — slicing escaped text could cut an entity.
     snap_lines = [
         f"  <snapshot>{escape(str(f.get('title', '')).strip()[:120])}</snapshot>"

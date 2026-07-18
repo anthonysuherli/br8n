@@ -55,3 +55,26 @@ async def resume_preamble(
     store = get_store(ctx.access_token, org_id=ctx.org_id)
     preamble, coverage = await select_preamble(query, store=store, kb_id=ctx.kb_id, depth=depth)
     return ResumeResult(ctx=ctx, store=store, preamble=preamble, coverage=coverage)
+
+
+# How many recent findings to scan for a structured next_action. Small: the
+# carrier is almost always the latest snapshot or session note.
+_NEXT_ACTION_SCAN = 10
+
+
+def latest_next_action(store, kb_id: str) -> tuple[str | None, str | None]:
+    """(next_action, thread_id) from the newest snapshot/note carrying one.
+
+    Best-effort: any store error or absent metadata degrades to (None, None) —
+    resume surfaces render exactly as they did before this field existed."""
+    try:
+        rows = store.list_findings(kb_id, limit=_NEXT_ACTION_SCAN).get("findings", [])
+    except Exception:  # noqa: BLE001 — resume must never fail on this
+        return None, None
+    for r in rows:
+        if r.get("category") not in ("snapshot", "note"):
+            continue
+        meta = r.get("metadata") or {}
+        if meta.get("next_action"):
+            return str(meta["next_action"]), meta.get("thread_id")
+    return None, None

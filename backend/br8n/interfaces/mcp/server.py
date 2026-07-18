@@ -21,7 +21,7 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
-from br8n.agent.resume import resume_preamble
+from br8n.agent.resume import latest_next_action, resume_preamble
 from br8n.capture.models import WorkspaceSnapshot
 from br8n.capture.service import persist_snapshot
 from br8n.config import get_config, get_settings
@@ -319,8 +319,9 @@ async def br8n_resume(
 ) -> dict:
     """Tap the session KB and return the 30-second resume card.
 
-    Returns `{banner, preamble, coverage, project, kb}`.
+    Returns `{banner, preamble, coverage, next_action, thread_id, project, kb}`.
     coverage routes behavior: rich → instant recall, gap → offer explore.
+    When next_action is set, lead your resume summary with it ("Do this now: …").
     """
     res = await resume_preamble(project, kb, query, depth=depth)
     await res.store.record_access(
@@ -330,10 +331,13 @@ async def br8n_resume(
         targets=PREAMBLE_TARGETS,
         query_text=query,
     )
+    next_action, thread_id = latest_next_action(res.store, res.ctx.kb_id)
     return {
         "banner": BR8N_BANNER,
         "preamble": res.preamble,
         "coverage": res.coverage,
+        "next_action": next_action,
+        "thread_id": thread_id,
         "project": project,
         "kb": kb,
     }
