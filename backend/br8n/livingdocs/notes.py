@@ -45,6 +45,7 @@ async def persist_note(
     title: str,
     captured_at: str = "",
     source: str = "agent",
+    next_action: str | None = None,
 ) -> dict:
     """Embed + insert the note as a `note` Finding, then write the markdown file.
 
@@ -67,6 +68,7 @@ async def persist_note(
                 "path": project_path,
             }
         ],
+        "metadata": {"next_action": next_action} if next_action else None,
     }
     [embedding] = await embed_batch([content])
     row["embedding"] = embedding

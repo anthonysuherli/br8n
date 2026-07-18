@@ -81,8 +81,11 @@ def build_note_directive(project: str, kb: str) -> str:
         "concise, durable facts only (decisions made, what changed, open threads), "
         "not a transcript.\n"
         "5. Persist it: call mcp__br8n__br8n_note(project, kb, project_path, "
-        "content, session_id, title) where content is the rendered markdown, title is "
-        "a one-line summary, and session_id is this session's id.\n"
+        "content, session_id, title, next_action=<one line: the single ~two-minute "
+        "step future-you should do first — concrete and immediately startable, e.g. "
+        "'rerun the failing test_auth.py'>) where content is the rendered markdown, "
+        "title is a one-line summary, and session_id is this session's id. Omit "
+        "next_action only when the session leaves genuinely nothing to pick up.\n"
         "Keep it quick and best-effort: persist the note (or skip silently), then end "
         "your turn — do not start unrelated work."
     )

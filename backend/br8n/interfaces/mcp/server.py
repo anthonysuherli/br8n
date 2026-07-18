@@ -93,7 +93,8 @@ async def br8n_capture(
 
 
 async def _note_impl(
-    project, kb, project_path, content, session_id, title, captured_at="", source="agent"
+    project, kb, project_path, content, session_id, title, captured_at="", source="agent",
+    next_action=None,
 ):
     ctx = resolve_tenant(project, kb, create=True)
     res = await persist_note(
@@ -105,6 +106,7 @@ async def _note_impl(
         title=title,
         captured_at=captured_at,
         source=source,
+        next_action=next_action,
     )
     schedule_distill(ctx, project_path=project_path, kb=kb)
     schedule_timeline(ctx, project=project, project_path=project_path, kb=kb)
@@ -121,14 +123,17 @@ async def br8n_note(
     title: str,
     captured_at: str = "",
     source: str = "agent",
+    next_action: str | None = None,
 ) -> dict:
     """Persist a session note: a `note` Finding (searchable, feeds resume) AND a
     markdown file under .br8n/notes/<kb>/. Then schedules a debounced re-distill of
     the curated doc tree. Called by the Stop hook at session end. `content` should be
-    rendered per the KB's note policy (br8n_notes_policy_get). Returns
-    {finding_id, note_path, project, kb}."""
+    rendered per the KB's note policy (br8n_notes_policy_get).
+    next_action: the single ~two-minute step future-you should do first (one line).
+    Returns {finding_id, note_path, project, kb}."""
     return await _note_impl(
-        project, kb, project_path, content, session_id, title, captured_at, source
+        project, kb, project_path, content, session_id, title, captured_at, source,
+        next_action,
     )
 
 
