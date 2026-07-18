@@ -20,6 +20,7 @@ import asyncio
 import logging
 import os
 import re
+import uuid
 
 from pydantic import BaseModel, Field
 
@@ -167,7 +168,14 @@ async def activity_extract(snap: WorkspaceSnapshot, finding_id: str) -> KGExtrac
 
     if snap.hypothesis:
         label = await _task_label(snap.hypothesis, cfg)
-        ti = g.node("task", label, {"repo": repo}, grounded)
+        task_props: dict = {
+            "repo": repo,
+            "thread_id": snap.thread_id or uuid.uuid4().hex,
+            "thread_state": "open",
+        }
+        if snap.next_action:
+            task_props["next_action"] = snap.next_action
+        ti = g.node("task", label, task_props, grounded)
         g.edge(si, ti, "pursued", grounded)
         g.edge(ti, ri, "in_repo", grounded)
 
@@ -216,7 +224,7 @@ async def _task_label(hypothesis: str, cfg: ActivityConfig) -> str:
 async def _persist(store: Store, org_id: str, kb_id: str, extraction: KGExtraction) -> dict:
     """Embed node labels, upsert nodes, then resolve + upsert edges."""
     if not extraction.nodes:
-        return {"nodes": 0, "edges_created": 0}
+        return {"nodes": 0, "edges_created": 0, "node_ids": []}
 
     embeddings: list[list[float]] = []
     try:
@@ -250,7 +258,28 @@ async def _persist(store: Store, org_id: str, kb_id: str, extraction: KGExtracti
             "grounded_in": e.grounded_in,
         })
     edges_created = await store.upsert_kg_edges(kb_id, edge_rows)
-    return {"nodes": len(node_ids), "edges_created": edges_created}
+    return {"nodes": len(node_ids), "edges_created": edges_created, "node_ids": node_ids}
+
+
+async def _sync_task_props(store: Store, kb_id: str, node_id: str, fresh: dict) -> None:
+    """Converge a task node's behavioral props after upsert.
+
+    upsert_kg_nodes merges existing-wins, so a pre-existing node keeps its
+    original thread_id (first mint wins) but would also keep a stale
+    next_action. Read-merge-write: backfill thread_id/thread_state on legacy
+    nodes, always refresh next_action from the latest capture."""
+    node = store.get_kg_node(kb_id, node_id)
+    if not node:
+        return
+    props = dict(node.get("properties") or {})
+    before = dict(props)
+    if fresh.get("thread_id"):
+        props.setdefault("thread_id", fresh["thread_id"])
+    props.setdefault("thread_state", "open")
+    if fresh.get("next_action"):
+        props["next_action"] = fresh["next_action"]
+    if props != before:
+        await store.update_kg_node(kb_id, node_id, properties=props)
 
 
 # --- population (fire-and-forget, best-effort) ------------------------------
@@ -263,6 +292,14 @@ async def _run_activity_update(snap: WorkspaceSnapshot, finding_id: str, *, acce
         store, org_id_r, kb_id = resolve_activity_target(access_token=access_token, org_id=org_id, create=True)
         extraction = await activity_extract(snap, finding_id)
         result = await _persist(store, org_id_r, kb_id, extraction)
+        task_idx = next(
+            (i for i, n in enumerate(extraction.nodes) if n.type == "task"), None
+        )
+        if task_idx is not None and task_idx < len(result["node_ids"]):
+            await _sync_task_props(
+                store, kb_id, result["node_ids"][task_idx],
+                extraction.nodes[task_idx].properties,
+            )
         logger.info(
             "activity KG: +%s nodes, +%s edges (finding=%s)",
             result["nodes"], result["edges_created"], finding_id,
