@@ -57,9 +57,20 @@ gaps block fixing this cleanly:
   `store.get_kg_node` + `store.update_kg_node` (mirroring
   `distill.py`'s concept-status mutation) — never the existing-wins upsert, which
   would silently drop updates.
-- When a snapshot carries `thread_id`, the extract pass converges on that node id
-  directly instead of relying on label match; the KG mirror of `next_action` is
-  refreshed on each capture.
+- When a snapshot carries `thread_id`, it is recorded on the task node's
+  properties; the KG mirror of `next_action` is refreshed on each capture.
+
+  **Amended 2026-07-18 (as-built).** This section originally specified that a
+  supplied `thread_id` would converge the extract pass *on that node id
+  directly*, bypassing label match. That is NOT what shipped: node identity
+  still resolves purely via the `(type, label)` upsert, and a supplied
+  `thread_id` is only stashed in properties. Consequence: if the LLM distils a
+  different label for the same work, a second task node is minted carrying the
+  same `thread_id` — two "open" nodes for one thread. Nothing counts task nodes
+  today (the WIP governor is a later spec), and no surface round-trips
+  `thread_id` back into capture, so the path is currently unreachable and the
+  defect is latent. **Follow-up owned by the WIP-governor spec:** implement
+  node-id convergence (or a hard thread key) before anything counts threads.
 - Rides the existing `BR8N_ACTIVITY_KG` gate; best-effort, fail-silent, same
   `_BG_TASKS` fire-and-forget shape. Park/close transitions and any WIP counting:
   deferred to the WIP-governor spec.
