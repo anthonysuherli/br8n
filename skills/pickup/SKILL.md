@@ -29,10 +29,16 @@ Resolve `project` = git repo basename, `kb` = git branch (see
 Call `mcp__plugin_br8n_br8n__br8n_resume(project, kb, query)` with `query` =
 whatever the user is reorienting toward (omit for the synopsis-only spine).
 
-Lead with the **latest `hypothesis`** — the one-line intent from the most recent
-snapshot. After the banner, surface it first and large:
+Lead with the **`next_action`** returned by `br8n_resume` — the card must open
+with a single concrete step, not a menu:
 
+> **Do this now:** `<next_action>`
 > **You were:** `<latest hypothesis>`
+
+If `next_action` is null (legacy captures), derive a ~two-minute step yourself
+from the hypothesis + `git_diff_stat` (e.g. "open `<cursor_file>:<line>` and
+re-read the failing branch") and lead with that instead. Never open with a list
+of options — one pre-selected action first, supporting context after.
 
 Then the supporting context, tersely:
 - **Branch / files** — `cursor_file:cursor_line`, open files from the snapshot.
@@ -40,8 +46,7 @@ Then the supporting context, tersely:
 - **Synopsis** — the `<N>` standing topics, titles only.
 
 **Route on coverage:**
-- **rich / sparse** → you have a card; offer the obvious next action (resume the
-  hypothesis, open the cursor file).
+- **rich / sparse** → you have a card; lead with the next_action (see Step 1).
 - **gap** → no captured context for *this* branch. Don't dead-end — fall through to
   **selector mode** so the user can pick a repo+branch they *have* captured (or, if the
   selector is also empty, offer `/br8n:capture` to start tracking or

@@ -40,13 +40,19 @@ If the user gave intent ("I'm tracking down the auth race"), use it verbatim as
 `hypothesis`. If not, **infer one** from the diff stat + recent conversation and
 **confirm it in one line** before saving — a wrong hypothesis is worse than none.
 
+Also fill **`next_action`** — the single ~two-minute step future-you should do
+first (e.g. "rerun the failing test_auth.py", "finish the TODO in adapter.py:49").
+If the user stated one, use it verbatim; otherwise **infer it** from the diff and
+conversation. Concrete and immediately startable — a command to run or a file:line
+to open, never a project-sized goal. Do not ask the user for it.
+
 Then call:
 
 ```
 mcp__plugin_br8n_br8n__br8n_capture(
   project, kb, trigger="manual", captured_at=<iso>,
   branch, git_diff_stat, cursor_file?, cursor_line?, open_files?,
-  hypothesis=<the one-liner>, project_path=<repo path>
+  hypothesis=<the one-liner>, next_action=<the two-minute step>, project_path=<repo path>
 )
 ```
 
