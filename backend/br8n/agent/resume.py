@@ -57,24 +57,45 @@ async def resume_preamble(
     return ResumeResult(ctx=ctx, store=store, preamble=preamble, coverage=coverage)
 
 
-# How many recent findings to scan for a structured next_action. Small: the
-# carrier is almost always the latest snapshot or session note.
-_NEXT_ACTION_SCAN = 10
+# How many recent findings per category to scan for a structured next_action.
+# Small: the carrier is almost always the latest snapshot or session note.
+_NEXT_ACTION_SCAN_PER_CATEGORY = 10
+
+
+def _newest_carrier(rows: list[dict]) -> dict | None:
+    """First row (newest-first) whose metadata carries a next_action, else None."""
+    for r in rows:
+        meta = r.get("metadata") or {}
+        if meta.get("next_action"):
+            return r
+    return None
 
 
 def latest_next_action(store, kb_id: str) -> tuple[str | None, str | None]:
     """(next_action, thread_id) from the newest snapshot/note carrying one.
 
-    Best-effort: any store error or absent metadata degrades to (None, None) —
-    resume surfaces render exactly as they did before this field existed."""
+    Queries the ``snapshot`` and ``note`` categories separately (rather than
+    scanning a mixed recent-findings window) so that other features bulk-
+    inserting findings of other categories into the same KB can't push the
+    carrier out of range. Best-effort: any store error or absent metadata
+    degrades to (None, None) — resume surfaces render exactly as they did
+    before this field existed."""
     try:
-        rows = store.list_findings(kb_id, limit=_NEXT_ACTION_SCAN).get("findings", [])
+        snapshot_rows = store.list_findings(
+            kb_id, category="snapshot", limit=_NEXT_ACTION_SCAN_PER_CATEGORY
+        ).get("findings", [])
+        note_rows = store.list_findings(
+            kb_id, category="note", limit=_NEXT_ACTION_SCAN_PER_CATEGORY
+        ).get("findings", [])
+
+        candidates = [
+            c for c in (_newest_carrier(snapshot_rows), _newest_carrier(note_rows)) if c is not None
+        ]
+        if not candidates:
+            return None, None
+
+        best = max(candidates, key=lambda r: r.get("created_at") or "")
+        meta = best.get("metadata") or {}
+        return str(meta["next_action"]), meta.get("thread_id")
     except Exception:  # noqa: BLE001 — resume must never fail on this
         return None, None
-    for r in rows:
-        if r.get("category") not in ("snapshot", "note"):
-            continue
-        meta = r.get("metadata") or {}
-        if meta.get("next_action"):
-            return str(meta["next_action"]), meta.get("thread_id")
-    return None, None

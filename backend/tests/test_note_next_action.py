@@ -58,6 +58,20 @@ async def test_note_without_next_action_has_no_metadata(local_env, tmp_path):
     assert got["metadata"] is None
 
 
+async def test_note_whitespace_only_next_action_has_no_metadata(local_env, tmp_path):
+    from br8n.interfaces.mcp.tenancy import resolve_tenant
+    from br8n.livingdocs.notes import persist_note
+    from br8n.store import get_store
+
+    ctx = resolve_tenant("proj", "main", create=True)
+    res = await persist_note(
+        ctx, project_path=str(tmp_path), kb="main", content="## Decisions\n- x",
+        session_id="s1", title="session note", next_action="   ",
+    )
+    got = get_store(ctx.access_token).get_finding(ctx.kb_id, res["finding_id"])
+    assert got["metadata"] is None
+
+
 def test_directive_mentions_next_action():
     import pathlib
     import sys

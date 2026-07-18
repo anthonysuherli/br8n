@@ -48,11 +48,14 @@ def snapshot_to_finding(snap: WorkspaceSnapshot) -> dict:
     title = _derive_title(snap)
     metadata = {
         k: v
-        for k, v in {
-            "hypothesis": snap.hypothesis,
-            "next_action": snap.next_action,
-            "thread_id": snap.thread_id,
-        }.items()
+        for k, v in (
+            (k, v.strip() if isinstance(v, str) else v)
+            for k, v in {
+                "hypothesis": snap.hypothesis,
+                "next_action": snap.next_action,
+                "thread_id": snap.thread_id,
+            }.items()
+        )
         if v
     }
     return {

@@ -12,6 +12,7 @@ class _FakeStore:
 
     def list_findings(self, kb_id, category=None, limit=None):
         rows = [f for f in self._findings if category is None or f["category"] == category]
+        rows = sorted(rows, key=lambda r: r.get("created_at") or "", reverse=True)
         return {"count": len(rows), "findings": rows[: limit or 20]}
 
     def load_synopsis(self, kb_id):
@@ -56,6 +57,45 @@ def test_assemble_json_carries_next_action_and_metadata_hypothesis():
     assert card.hypothesis == "fix auth race"
     assert card.next_action == "rerun test_auth.py"
     assert card.thread_id == "t-1"
+
+
+def test_latest_next_action_survives_unrelated_category_flood():
+    # 20+ newer findings of an unrelated category push the snapshot/note
+    # carrier out of any small fixed-size unfiltered scan window.
+    flood = [
+        _f("insight", f"insight {i}", created_at=f"2026-07-18T{10 + i:02d}:00:00Z")
+        for i in range(25)
+    ]
+    carrier = _f(
+        "note", "old note", metadata={"next_action": "rerun tests", "thread_id": "t-1"},
+        created_at="2026-07-18T05:00:00Z",
+    )
+    store = _FakeStore(flood + [carrier])
+    assert latest_next_action(store, "kb1") == ("rerun tests", "t-1")
+
+
+def test_latest_next_action_cross_category_recency_note_wins():
+    store = _FakeStore([
+        _f("snapshot", "older snapshot",
+           metadata={"next_action": "snapshot action", "thread_id": "t-snap"},
+           created_at="2026-07-18T09:00:00Z"),
+        _f("note", "newer note",
+           metadata={"next_action": "note action", "thread_id": "t-note"},
+           created_at="2026-07-18T10:00:00Z"),
+    ])
+    assert latest_next_action(store, "kb1") == ("note action", "t-note")
+
+
+def test_latest_next_action_cross_category_recency_snapshot_wins():
+    store = _FakeStore([
+        _f("note", "older note",
+           metadata={"next_action": "note action", "thread_id": "t-note"},
+           created_at="2026-07-18T09:00:00Z"),
+        _f("snapshot", "newer snapshot",
+           metadata={"next_action": "snapshot action", "thread_id": "t-snap"},
+           created_at="2026-07-18T10:00:00Z"),
+    ])
+    assert latest_next_action(store, "kb1") == ("snapshot action", "t-snap")
 
 
 def test_assemble_json_falls_back_to_title_sniff_for_legacy_rows():

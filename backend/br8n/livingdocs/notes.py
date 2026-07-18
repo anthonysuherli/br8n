@@ -53,6 +53,7 @@ async def persist_note(
     write (fire-and-forget in the caller) so the resume card stays current.
     """
     captured_at = captured_at or datetime.now(timezone.utc).isoformat()
+    next_action = next_action.strip() if next_action else next_action
     row = {
         "org_id": ctx.org_id,
         "kb_id": ctx.kb_id,

@@ -33,6 +33,11 @@ def test_metadata_none_when_all_empty():
     assert payload["metadata"] is None
 
 
+def test_whitespace_only_next_action_dropped_from_metadata():
+    payload = snapshot_to_finding(_snap(hypothesis="fix auth race", next_action="   "))
+    assert payload["metadata"] == {"hypothesis": "fix auth race"}
+
+
 def test_title_and_content_unchanged_by_new_fields():
     with_na = snapshot_to_finding(_snap(hypothesis="fix auth race", next_action="rerun tests"))
     without = snapshot_to_finding(_snap(hypothesis="fix auth race"))
