@@ -260,7 +260,7 @@ class SQLiteStore:
                     row.get("confidence"),
                     json.dumps(list(row.get("tags") or [])),
                     json.dumps(list(row.get("provenance") or [])),
-                    json.dumps(row["metadata"]) if row.get("metadata") else None,
+                    json.dumps(row["metadata"]) if row.get("metadata") is not None else None,
                     row.get("created_at") or _now_iso(),
                 ),
             )

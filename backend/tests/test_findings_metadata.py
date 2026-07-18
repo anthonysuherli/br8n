@@ -46,3 +46,9 @@ async def test_missing_metadata_reads_as_none(store):
     [fid] = await store.insert_findings([row])
     assert store.get_finding("kb1", fid)["metadata"] is None
     assert store.list_findings("kb1")["findings"][0]["metadata"] is None
+
+
+async def test_empty_dict_metadata_round_trips_as_empty_dict(store):
+    [fid] = await store.insert_findings([_row("kb1", "t1", {})])
+    assert store.get_finding("kb1", fid)["metadata"] == {}
+    assert store.list_findings("kb1")["findings"][0]["metadata"] == {}
