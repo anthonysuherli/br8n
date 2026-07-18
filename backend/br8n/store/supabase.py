@@ -34,8 +34,8 @@ from br8n.constants import JOURNAL_SCOPE
 from br8n.monitoring.recorder import record_access as _record_access
 
 # Column lists copied from findings/service.py — keep in lockstep.
-_FINDING_COLS = "id, title, content, category, confidence, tags, provenance, created_at"
-_FINDING_LIST_COLS = "id, title, category, confidence, tags, created_at"
+_FINDING_COLS = "id, title, content, category, confidence, tags, provenance, metadata, created_at"
+_FINDING_LIST_COLS = "id, title, category, confidence, tags, metadata, created_at"
 
 LIST_DEFAULT_LIMIT = 20
 LIST_MAX_LIMIT = 100

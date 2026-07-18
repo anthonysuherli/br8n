@@ -311,7 +311,7 @@ async def test_shape_parity_with_supabase(store):
     # get_finding keys == SupabaseStore's _FINDING_COLS.
     got = store.get_finding("kb1", fid)
     assert set(got) == {
-        "id", "title", "content", "category", "confidence", "tags", "provenance", "created_at"
+        "id", "title", "content", "category", "confidence", "tags", "provenance", "metadata", "created_at"
     }
 
     # match_findings keys == match RPC return columns (sans content optionality) + similarity.
@@ -324,7 +324,7 @@ async def test_shape_parity_with_supabase(store):
     listed = store.list_findings("kb1")
     assert set(listed) == {"count", "findings"}
     assert set(listed["findings"][0]) == {
-        "id", "title", "category", "confidence", "tags", "created_at"
+        "id", "title", "category", "confidence", "tags", "metadata", "created_at"
     }
 
     # The protocol surface matches SupabaseStore's.

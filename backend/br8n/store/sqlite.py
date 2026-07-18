@@ -44,8 +44,8 @@ from br8n.constants import JOURNAL_SCOPE
 _ORG = "local"
 
 # Column lists kept in lockstep with findings/service.py + the match RPC.
-_FINDING_COLS = ("id", "title", "content", "category", "confidence", "tags", "provenance", "created_at")
-_FINDING_LIST_COLS = ("id", "title", "category", "confidence", "tags", "created_at")
+_FINDING_COLS = ("id", "title", "content", "category", "confidence", "tags", "provenance", "metadata", "created_at")
+_FINDING_LIST_COLS = ("id", "title", "category", "confidence", "tags", "metadata", "created_at")
 # match_findings returns the full finding minus created_at, plus a computed similarity.
 _FINDING_MATCH_COLS = ("id", "title", "content", "category", "confidence", "tags", "provenance")
 
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS kbs (
 CREATE TABLE IF NOT EXISTS findings (
   id TEXT PRIMARY KEY, org_id TEXT NOT NULL, kb_id TEXT NOT NULL,
   title TEXT, content TEXT, category TEXT, confidence REAL,
-  tags TEXT, provenance TEXT, created_at TEXT NOT NULL);
+  tags TEXT, provenance TEXT, metadata TEXT, created_at TEXT NOT NULL);
 CREATE VIRTUAL TABLE IF NOT EXISTS vec_findings USING vec0(finding_id TEXT, embedding float[1536]);
 CREATE TABLE IF NOT EXISTS kb_synopsis (
   kb_id TEXT PRIMARY KEY, org_id TEXT, content TEXT,
@@ -95,6 +95,8 @@ _ADD_COLUMN_MIGRATIONS: list[str] = [
     "ALTER TABLE kbs ADD COLUMN init_offered_at TEXT;",
     # 0008: schema-drift offer debounce — residual count stamped at last drift offer
     "ALTER TABLE kbs ADD COLUMN drift_offered_count INTEGER;",
+    # 0009: structured capture fields (hypothesis / next_action / thread_id)
+    "ALTER TABLE findings ADD COLUMN metadata TEXT;",
 ]
 
 # Cap on how many grounding finding ids a long-lived node (a repo touched for
@@ -245,8 +247,8 @@ class SQLiteStore:
             self._conn.execute(
                 """
                 INSERT INTO findings
-                  (id, org_id, kb_id, title, content, category, confidence, tags, provenance, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                  (id, org_id, kb_id, title, content, category, confidence, tags, provenance, metadata, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     fid,
@@ -258,6 +260,7 @@ class SQLiteStore:
                     row.get("confidence"),
                     json.dumps(list(row.get("tags") or [])),
                     json.dumps(list(row.get("provenance") or [])),
+                    json.dumps(row["metadata"]) if row.get("metadata") else None,
                     row.get("created_at") or _now_iso(),
                 ),
             )
@@ -287,6 +290,7 @@ class SQLiteStore:
             "confidence": r["confidence"],
             "tags": _json_load(r["tags"], []),
             "provenance": _json_load(r["provenance"], []),
+            "metadata": _json_load(r["metadata"], None),
             "created_at": r["created_at"],
         }
 
@@ -316,6 +320,7 @@ class SQLiteStore:
                 "category": r["category"],
                 "confidence": r["confidence"],
                 "tags": _json_load(r["tags"], []),
+                "metadata": _json_load(r["metadata"], None),
                 "created_at": r["created_at"],
             }
             for r in rows
