@@ -59,13 +59,17 @@ async def br8n_capture(
     git_diff_stat: str | None = None,
     terminal_tail: str | None = None,
     hypothesis: str | None = None,
+    next_action: str | None = None,
+    thread_id: str | None = None,
     project_path: str = "",
 ) -> dict:
     """Persist a workspace snapshot as a Finding. Creates the project/KB on demand.
 
     Call this when the developer is interrupted (blur, git checkout, idle).
     `hypothesis` is the one-line intent string — the wedge that makes context
-    recovery 3–5× faster. Returns the finding id.
+    recovery 3–5× faster. `next_action` is the single ~two-minute step future-you should do first —
+    infer it from the diff/conversation when the user doesn't state one.
+    Returns the finding id.
     """
     snap = WorkspaceSnapshot(
         project_path=project_path or project,
@@ -78,6 +82,8 @@ async def br8n_capture(
         cursor_line=cursor_line,
         terminal_tail=terminal_tail,
         hypothesis=hypothesis,
+        next_action=next_action,
+        thread_id=thread_id,
     )
     ctx = resolve_tenant(project, kb, create=True)
     finding_id = await persist_snapshot(ctx, snap)

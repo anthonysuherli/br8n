@@ -27,6 +27,8 @@ class SnapshotRequest(BaseModel):
     cursor_line: int | None = None
     terminal_tail: str | None = None
     hypothesis: str | None = None
+    next_action: str | None = None
+    thread_id: str | None = None
     project_path: str = ""
 
 
@@ -54,6 +56,8 @@ async def capture(body: SnapshotRequest, principal: Principal = Depends(require_
         cursor_line=body.cursor_line,
         terminal_tail=body.terminal_tail,
         hypothesis=body.hypothesis,
+        next_action=body.next_action,
+        thread_id=body.thread_id,
     )
     ctx = resolve_tenant(body.project, body.kb, create=True, principal=principal)
     finding_id = await persist_snapshot(ctx, snap)
