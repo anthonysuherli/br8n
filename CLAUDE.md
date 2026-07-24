@@ -235,7 +235,7 @@ Claude Code behaves for each slash command, calling the `br8n_*` MCP tools.
 skills/
   _shared/preamble-first.md   shared grounding convention (calls br8n_resume)
   pickup/SKILL.md             /br8n:pickup — the "where I was" card + cross-repo selector
-  capture/SKILL.md            /br8n:capture — save current context
+  capture/SKILL.md            /br8n:capture — save current context + background-sweep every other live CC session (live_sessions.py)
   search/SKILL.md             /br8n:search <q> — grounded answer from session KB
   explore/SKILL.md            /br8n:explore <p> — force the gap-fill pipeline
   activity/SKILL.md           /br8n:activity <q> — query the cross-repo activity graph
