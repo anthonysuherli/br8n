@@ -1,4 +1,3 @@
-from pathlib import Path
 
 from br8n.livingdocs.paths import DocPaths, ensure_layout
 

@@ -1,5 +1,5 @@
 from br8n.livingdocs.paths import DocPaths
-from br8n.livingdocs.policy import NotePolicy, load_policy, save_policy, default_policy
+from br8n.livingdocs.policy import load_policy, save_policy, default_policy
 
 
 def test_default_policy_sections():

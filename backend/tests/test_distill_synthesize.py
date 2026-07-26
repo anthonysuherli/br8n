@@ -20,7 +20,8 @@ async def test_synthesize_returns_candidates(monkeypatch):
 async def test_synthesize_empty_findings_no_llm(monkeypatch):
     called = False
     async def fake_completion(**kw):
-        nonlocal called; called = True
+        nonlocal called
+        called = True
         return d.ConceptBatch(concepts=[])
     monkeypatch.setattr(d, "structured_completion", fake_completion)
     out = await d.synthesize([], get_config().concept)
