@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Literal
 from xml.sax.saxutils import escape
 
-from br8n.clients.embeddings import embed_text
+from br8n.clients.embeddings import embed_text, embeddings_configured
 from br8n.config import TiersConfig, get_config
 
 Coverage = Literal["rich", "sparse", "gap"]
@@ -125,6 +125,37 @@ def render_preamble(
     return "\n".join(parts)
 
 
+_KEYLESS_RECENT_LIMIT = 8
+
+
+def _recent_bands(store, kb_id: str) -> tuple[dict[int, list[dict]], Coverage]:
+    """Retrieval fallback for installs with no embedding credential.
+
+    Capture stores findings unembedded when no key is set, so there is nothing
+    for `match_findings` to rank and a similarity search returns an empty card.
+    Falling back to the newest findings keeps the resume card useful on a bare
+    install — and recency is what "where was I" actually wants.
+
+    Band 1 so the rows render at every depth (`shallow` selects band 1 only),
+    but coverage is `sparse` rather than `rich`: these are recency-ordered, not
+    relevance-ranked, and callers gate on coverage to decide how much to trust.
+    """
+    listed = store.list_findings(kb_id, limit=_KEYLESS_RECENT_LIMIT) or {}
+    rows = listed.get("findings") or []
+    if not rows:
+        return {1: [], 2: [], 3: []}, "gap"
+
+    # list_findings omits `content` (it is a listing projection), which the
+    # renderer needs — hydrate the handful we are about to show.
+    hydrated: list[dict] = []
+    for row in rows:
+        try:
+            hydrated.append(store.get_finding(kb_id, row["id"]))
+        except Exception:  # noqa: BLE001 — a title-only row still beats nothing
+            hydrated.append(row)
+    return {1: hydrated, 2: [], 3: []}, "sparse"
+
+
 async def select_preamble(
     query: str | None,
     *,
@@ -144,16 +175,19 @@ async def select_preamble(
     bands: dict[int, list[dict]] = {1: [], 2: [], 3: []}
     coverage: Coverage = "gap"
     if query:
-        qvec = await embed_text(query)
-        rows = await store.match_findings(
-            kb_id,
-            qvec,
-            match_count=get_config().search.max_limit,
-            # floor at the weakest band; band_findings drops anything below it
-            min_similarity=cfg.band3_min,
-        )
-        bands = band_findings(rows, cfg)
-        coverage = assess_coverage(bands, cfg)
+        if embeddings_configured():
+            qvec = await embed_text(query)
+            rows = await store.match_findings(
+                kb_id,
+                qvec,
+                match_count=get_config().search.max_limit,
+                # floor at the weakest band; band_findings drops anything below it
+                min_similarity=cfg.band3_min,
+            )
+            bands = band_findings(rows, cfg)
+            coverage = assess_coverage(bands, cfg)
+        else:
+            bands, coverage = _recent_bands(store, kb_id)
 
     return render_preamble(synopsis, bands, depth=depth, cfg=cfg), coverage
 

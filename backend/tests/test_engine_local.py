@@ -53,6 +53,11 @@ def local_engine(monkeypatch, tmp_path):
 
     monkeypatch.setattr(capture_service, "embed_batch", _fake_embed_batch)
     monkeypatch.setattr(preamble, "embed_text", _fake_embed_text)
+    # Both modules gate on a real credential before using the embedder. Force it
+    # on, or these tests silently exercise the keyless path — and pass or fail
+    # depending on whether the developer happens to have a key in .env.
+    monkeypatch.setattr(capture_service, "embeddings_configured", lambda: True)
+    monkeypatch.setattr(preamble, "embeddings_configured", lambda: True)
 
     yield store_pkg
     store_pkg._local_stores.clear()

@@ -64,6 +64,37 @@ async def test_capture_succeeds_without_any_embedding_key(local_env, monkeypatch
     assert stored["title"]
 
 
+async def test_resume_card_is_not_empty_without_a_key(local_env, monkeypatch):
+    """The keyless install must still answer "where was I".
+
+    Capture stores findings unembedded with no credential, so a similarity
+    search has nothing to rank and would return an empty card. select_preamble
+    falls back to recency instead, which is what the resume card wants anyway.
+    """
+    monkeypatch.setattr("br8n.capture.service.embeddings_configured", lambda: False)
+    monkeypatch.setattr("br8n.agent.preamble.embeddings_configured", lambda: False)
+
+    async def explode(*a, **kw):
+        raise AssertionError("must not embed without a credential")
+
+    monkeypatch.setattr("br8n.capture.service.embed_batch", explode)
+    monkeypatch.setattr("br8n.agent.preamble.embed_text", explode)
+
+    ctx = _ctx()
+    await persist_snapshot(ctx, _snap())
+
+    from br8n.agent.preamble import select_preamble
+
+    preamble, coverage = await select_preamble(
+        "where was I", store=get_store(""), kb_id=ctx.kb_id
+    )
+
+    assert "<finding" in preamble, "keyless resume returned an empty card"
+    assert "release prep" in preamble  # the captured hypothesis survives
+    # Recency-ordered, not relevance-ranked — say so rather than claiming rich.
+    assert coverage == "sparse"
+
+
 async def test_capture_still_embeds_when_a_key_is_present(local_env, monkeypatch):
     seen: dict = {}
     monkeypatch.setattr("br8n.capture.service.embeddings_configured", lambda: True)
