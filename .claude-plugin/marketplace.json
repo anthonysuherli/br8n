@@ -5,15 +5,15 @@
     "email": "anthonysuherli@gmail.com"
   },
   "metadata": {
-    "description": "Marketplace for the br8n plugin — context capture + 30-second resume card on a self-contained Delapan engine fork.",
-    "version": "1.1.0"
+    "description": "Marketplace for the br8n plugin \u2014 context capture + 30-second resume card on a self-contained Delapan engine fork.",
+    "version": "1.1.1"
   },
   "plugins": [
     {
       "name": "br8n",
       "source": "./",
       "description": "Capture developer intent on interruption and replay it as a 30-second resume card. /br8n:pickup, /br8n:capture, /br8n:search, /br8n:explore over the br8n MCP server.",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "strict": false
     }
   ]

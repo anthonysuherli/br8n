@@ -5,6 +5,26 @@ All notable changes to br8n are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] — 2026-07-26
+
+Fixes two problems in v1.1.0 that its own CI surfaced minutes after tagging.
+**Use this release rather than v1.1.0.**
+
+### Fixed
+
+- **The resume card came back empty without an embedding key.** v1.1.0 made
+  capture keyless but left retrieval purely semantic, so a keyless install
+  stored unembedded findings that `select_preamble` could not rank — making the
+  documented "capture and resume work with no key" only half true. Retrieval now
+  falls back to the newest findings, reported as `sparse` coverage since they are
+  recency-ordered rather than relevance-ranked.
+- The local-engine test fixture patched the embedder but not the credential
+  gate, so the suite exercised whichever path the developer's `.env` happened to
+  select — green locally, red in CI. The fixture now pins it.
+- Ruff's rule set is selected explicitly and capped below 0.17. Ruff 0.16
+  widened its defaults to include isort, pyupgrade, bugbear and bandit, which
+  turned a green tree into 133 findings purely by upgrading the linter.
+
 ## [1.1.0] — 2026-07-26
 
 The install-it-yourself release. v1.0.0 was public but not actually installable by
@@ -70,5 +90,6 @@ First public tag. Capture/resume engine, activity knowledge graph, activity
 timeline, local (SQLite) and cloud (Supabase) storage tiers, Claude Code plugin
 with skills, MCP server, and the iOS companion read spine.
 
+[1.1.1]: https://github.com/anthonysuherli/br8n/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/anthonysuherli/br8n/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/anthonysuherli/br8n/releases/tag/v1.0.0
