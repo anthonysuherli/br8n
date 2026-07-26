@@ -8,7 +8,7 @@ description: Pick up where you left off — replay the resume card for the curre
 Pick up where you left off. Two modes from one verb:
 
 - **here** — replay the 30-second resume card for the current repo+branch (the
-  default fast path; context recovery in 30 seconds, not 9.5 minutes).
+  default fast path; context recovery in seconds rather than by hand).
 - **selector** — list every repo+branch you've captured to, most-recent first, and
   resume any one of them. The cross-repo way back in.
 

@@ -1,7 +1,14 @@
 # br8n
 
-Context-capture and resume engine — eliminates the 9.5-minute context-rebuild tax by
-capturing developer intent on interruption and replaying it as a 30-second resume card.
+Context-capture and resume engine — cuts the context-rebuild tax after an interruption
+by capturing developer intent and replaying it as a 30-second resume card.
+
+**On the "9.5 minutes" figure:** it appears in the README, the site hero, and
+`skills/pickup/SKILL.md`, but nothing in this repo sources it — `docs/launch/ws6`
+concedes it "is an assumption." The sourced numbers are ~23 minutes to refocus after
+an interruption (Gloria Mark, UC Irvine) and up to 45 for complex code. `ws1` sets the
+rule: cite the 23-minute figure, don't invent ROI claims. Fix or source the 9.5 before
+using it in launch copy.
 
 ## Design philosophy
 
@@ -49,10 +56,14 @@ br8n fully standalone.
   (`models.py` = node/edge carriers ported from delapan; `activity.py` = seeded
   ontology + deterministic-plus-gated-LLM extraction, fire-and-forget population on
   capture, and the query/rollup/stats read surfaces)
+- `br8n/livingdocs/` — the notes → distilled-docs spine: an append-only per-repo+branch
+  note stream, a journal, a per-KB capture policy, and a debounced cursor-driven
+  distill that rolls notes up into `.br8n/docs/`. Surfaces: `/br8n:notes`,
+  `/br8n:journal`, `/br8n:docs`
 - `br8n/api/` — FastAPI: `/v1/capture`, `/v1/resume/{project}/{kb}`, `/v1/explore/...`,
-  `/v1/activity/{graph,stats}`
-- `br8n/interfaces/mcp/server.py` — MCP tools: `br8n_capture`, `br8n_resume`,
-  `br8n_explore`, `br8n_activity`
+  `/v1/activity/{graph,stats}`, `/v1/chat`
+- `br8n/interfaces/mcp/server.py` — 23 MCP tools across capture/resume, living docs,
+  and the KG schema seam (full table in the MCP tools section below)
 - `ios-app/` — native SwiftUI companion (first standalone UI). v1 = read spine:
   Sign in, browse cross-repo activity, read resume cards. Consumes `/v1/projects`
   + `/v1/resume?format=json` + `/v1/activity/stats`. XcodeGen project (`project.yml`,
@@ -145,10 +156,22 @@ with the package (don't pass it by hand).
 
 ```bash
 cd backend
-python3.11 -m venv .venv          # or: uv venv
+python3 -m venv .venv             # any python >= 3.11; or: uv venv
 .venv/bin/pip install -e ".[dev]"   # or: uv sync
 cp .env.example .env              # pick the FREE or PAID block (see file)
 ```
+
+Verify an install (yours or a user's) with the doctor — it reports python version,
+storage tier, `sqlite-vec` load, DB-path writability, and which capabilities the
+present credentials unlock:
+
+```bash
+python -m br8n.api.main --check
+```
+
+br8n is published on PyPI as `br8n`, which installs the same code plus two console
+entry points (`br8n-mcp`, `br8n-server`). That is the path for wiring the MCP server
+into a non-Claude-Code client; contributors want the editable install above.
 
 **Free / local tier** (SQLite, no Supabase, no server API key, loopback-only).
 Capture and resume work with no keys at all; semantic search needs an embedding key
@@ -213,6 +236,17 @@ python -m br8n.interfaces.mcp.server          # add to .claude/settings.json
   single-configured-user path. Design + plan:
   `docs/plans/2026-05-30-multiuser-deploy-auth-{design,plan}.md`. Remaining
   (external): Fly.io deploy, Supabase Apple provider config, iOS sign-in wiring.
+- [x] Distribution — br8n is installable by someone other than the author.
+  `bin/br8n-mcp` bootstraps its own environment so `.mcp.json` carries no machine
+  paths; `sqlite-vec` is a declared dep; hooks resolve an interpreter instead of
+  calling a bare `python`; `--check` is a real doctor; CI (ruff + doctor + suite on
+  3.11/3.12 + a `twine check`ed build) gates every push. Released as **v1.1.1** and
+  published to PyPI as `br8n`. Three working install paths: plugin marketplace
+  (supported), `pip install br8n`, and `uvx --from br8n br8n-mcp`.
+- [ ] Dogfooding — br8n is **not yet capturing its own development**. The local
+  store holds 7 snapshots total and `br8n/main` has zero, so `/br8n:pickup` on this
+  repo returns an empty card. The capture loop needs to run habitually here before
+  the resume card can be demoed or trusted.
 
 ## API surface
 
@@ -228,6 +262,7 @@ python -m br8n.interfaces.mcp.server          # add to .claude/settings.json
 | `/v1/explore/{id}/status` | GET | Poll exploration progress + results |
 | `/v1/activity/graph` | GET | Query the cross-repo activity graph (semantic `q`, optional `repo`) |
 | `/v1/activity/stats` | GET | Activity-graph totals + hotspots (most-touched repos/files/tasks) |
+| `/v1/chat` | POST | Grounded funnel chat agent (SSE stream). Taps the maintained agent KB via `select_preamble`, stateless (history rides in the body). Gated by `BR8N_CHAT`, default on |
 
 ## MCP tools (for Claude Code)
 
@@ -239,6 +274,29 @@ python -m br8n.interfaces.mcp.server          # add to .claude/settings.json
 | `br8n_explore` | Run gap-fill pipeline synchronously (blocks ~1-3 min) |
 | `br8n_activity` | Query the cross-repo activity graph (subgraph + NL summary) |
 | `br8n_timeline` | (Re)build the append-only activity timeline (`.br8n/timeline/`) from notes+captures+journal |
+| `br8n_kb_exists` | Does this repo+branch KB exist yet? (first-run gate) |
+
+Living docs — notes, journal, distillation:
+
+| Tool | Purpose |
+|---|---|
+| `br8n_note` | Append a note to the repo+branch note stream |
+| `br8n_notes_policy_get` / `br8n_notes_policy_set` | Read/write the per-KB note-capture policy |
+| `br8n_journal` | Append a journal entry |
+| `br8n_journal_recent` / `br8n_journal_search` | Read the journal chronologically / by query |
+| `br8n_distill` | Roll notes up into the distilled doc tree (debounced, cursor-driven) |
+
+Knowledge graph — the schema seam:
+
+| Tool | Purpose |
+|---|---|
+| `br8n_graph` | Query the KB's knowledge graph (subgraph around a seed) |
+| `br8n_build_graph` | (Re)build the graph from findings |
+| `br8n_kg_stats` | Node/edge totals, counts by type and relation |
+| `br8n_get_kg_schema` / `br8n_set_kg_schema` | Read/write the KB's ontology |
+| `br8n_propose_kg_schema` | Draft an ontology from what's been collected (the wizard's input) |
+| `br8n_schema_drift` | Decide cold-start vs drift — drives the gated `/br8n:schema` offer |
+| `br8n_mark_init_offered` / `br8n_mark_drift_offered` | Stamp an offer so it is not re-raised ("offer once, then go quiet") |
 
 ## Plugin (Claude Code skills)
 
@@ -255,7 +313,14 @@ skills/
   explore/SKILL.md            /br8n:explore <p> — force the gap-fill pipeline
   activity/SKILL.md           /br8n:activity <q> — query the cross-repo activity graph
   timeline/SKILL.md           /br8n:timeline — the append-only activity log (recent/week/all-time)
+  notes/SKILL.md              /br8n:notes — append to / read the repo+branch note stream
+  journal/SKILL.md            /br8n:journal — append to / search the journal
+  docs/SKILL.md               /br8n:docs — the distilled doc tree built from notes
+  schema/SKILL.md             /br8n:schema — design or reshape the KG ontology (the one human-in-the-loop seam)
 ```
+
+All ten are registered in `.claude-plugin/plugin.json`; a skill on disk that is
+not listed there never loads for an installed user.
 
 **Target resolution** (simpler than Delapan — no active-KB state):
 - `project` = current git repo name (`git rev-parse --show-toplevel` basename)

@@ -2,8 +2,11 @@
 
 **One-command capture + instant resume.** br8n saves your thinking before you switch 
 away and replays it as a 30-second "where I was" card when you return. No more rebuilding 
-context for 9.5 minutes. *(Automatic capture-on-interrupt is a roadmap goal; today you 
-checkpoint with one command.)*
+context by hand. Research puts the cost of refocusing after an interruption at about 
+23 minutes ([Gloria Mark, UC Irvine](https://www.ics.uci.edu/~gmark/chi08-mark.pdf)), 
+and longer for complex code. *(Snapshots are taken two ways today: automatically at 
+commit boundaries via an installed `post-commit` hook, and on demand with 
+`/br8n:capture`. There is no continuous watcher.)*
 
 Most tools capture *state* (files, layout, git history). br8n captures *intent* — the 
 one-line hypothesis in your head: *"JWT validation is caching stale tokens."* That's the 
