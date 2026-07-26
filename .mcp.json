@@ -1,8 +1,8 @@
 {
   "br8n": {
     "type": "stdio",
-    "command": "/Users/suherli/Repositories/br8n/backend/.venv/bin/python",
+    "command": "/Users/anthonysuherli/Projects/br8n/backend/.venv/bin/python",
     "args": ["-m", "br8n.interfaces.mcp.server"],
-    "cwd": "/Users/suherli/Repositories/br8n/backend"
+    "cwd": "/Users/anthonysuherli/Projects/br8n/backend"
   }
 }
