@@ -5,6 +5,20 @@ All notable changes to br8n are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] — 2026-07-26
+
+Listing metadata, so br8n can be published to the official MCP Registry.
+
+### Added
+
+- `server.json` at the repo root, validated against the published
+  `2025-12-11` server schema. Declares the PyPI package, `uvx` runtime hint, and
+  the `--from br8n br8n-mcp` invocation the console script needs because the
+  entry point and the distribution share a name only by coincidence.
+- An `mcp-name: io.github.anthonysuherli/br8n` marker in the PyPI-facing README.
+  The registry reads it from the *published* package description to prove
+  ownership, and 1.1.1 shipped without it — hence this release.
+
 ## [1.1.1] — 2026-07-26
 
 Fixes two problems in v1.1.0 that its own CI surfaced minutes after tagging.
@@ -90,6 +104,7 @@ First public tag. Capture/resume engine, activity knowledge graph, activity
 timeline, local (SQLite) and cloud (Supabase) storage tiers, Claude Code plugin
 with skills, MCP server, and the iOS companion read spine.
 
+[1.1.2]: https://github.com/anthonysuherli/br8n/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/anthonysuherli/br8n/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/anthonysuherli/br8n/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/anthonysuherli/br8n/releases/tag/v1.0.0

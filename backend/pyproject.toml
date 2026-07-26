@@ -1,6 +1,6 @@
 [project]
 name = "br8n"
-version = "1.1.1"
+version = "1.1.2"
 description = "br8n — self-contained context-capture and resume engine."
 readme = "README.md"
 license = "MIT"

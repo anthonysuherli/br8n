@@ -1,3 +1,5 @@
+<!-- mcp-name: io.github.anthonysuherli/br8n -->
+
 # br8n
 
 Context-capture and resume engine — captures developer intent on interruption and
