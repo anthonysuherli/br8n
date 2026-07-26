@@ -67,6 +67,75 @@ def create_app() -> FastAPI:
 app = create_app()
 
 
+def check() -> int:
+    """Doctor: verify an install can actually serve. Returns a process exit code.
+
+    Hard failures (exit 1) are things that stop br8n working at all; everything
+    else is reported as a capability that is off, not an error — capture and
+    resume run with no credentials.
+    """
+    import os
+    import sqlite3
+    import sys
+    import tempfile
+
+    ok = True
+
+    def line(status: str, label: str, detail: str = "") -> None:
+        print(f"  {status:<5} {label}" + (f" — {detail}" if detail else ""))
+
+    print("br8n check")
+
+    v = sys.version_info
+    if v >= (3, 11):
+        line("ok", "python", f"{v.major}.{v.minor}.{v.micro}")
+    else:
+        ok = False
+        line("FAIL", "python", f"{v.major}.{v.minor} — br8n needs >= 3.11")
+
+    backend = active_backend()
+    line("ok", "backend", f"{backend} tier")
+
+    if backend == "local":
+        try:
+            import sqlite_vec
+
+            conn = sqlite3.connect(":memory:")
+            conn.enable_load_extension(True)
+            sqlite_vec.load(conn)
+            conn.close()
+            line("ok", "sqlite-vec", "extension loads")
+        except Exception as exc:  # noqa: BLE001 — report any failure mode
+            ok = False
+            line("FAIL", "sqlite-vec", f"{type(exc).__name__}: {exc}")
+
+        db_path = os.getenv("BR8N_DB_PATH") or os.path.expanduser("~/.br8n/brain.db")
+        db_dir = os.path.dirname(db_path) or "."
+        try:
+            os.makedirs(db_dir, exist_ok=True)
+            with tempfile.NamedTemporaryFile(dir=db_dir):
+                pass
+            line("ok", "db path", db_path)
+        except Exception as exc:  # noqa: BLE001 — report any failure mode
+            ok = False
+            line("FAIL", "db path", f"{db_path} not writable: {exc}")
+
+    settings = get_settings()
+    if settings.ai_gateway_api_key or settings.openai_api_key:
+        src = "AI_GATEWAY_API_KEY" if settings.ai_gateway_api_key else "OPENAI_API_KEY"
+        line("ok", "embeddings", f"{src} set — semantic search enabled")
+    else:
+        line("off", "embeddings", "no key — capture/resume work, semantic search does not")
+
+    if getattr(settings, "tavily_api_key", None):
+        line("ok", "explore", "TAVILY_API_KEY set")
+    else:
+        line("off", "explore", "no TAVILY_API_KEY — gap-fill pipeline unavailable")
+
+    print("\n" + ("ready" if ok else "not ready — fix the FAIL lines above"))
+    return 0 if ok else 1
+
+
 def run() -> None:
     """Blessed local-run entrypoint: owns the bind host and refuses to expose the
     auth-less local tier on a non-loopback interface."""
@@ -85,4 +154,8 @@ def run() -> None:
 
 
 if __name__ == "__main__":
+    import sys
+
+    if "--check" in sys.argv[1:]:
+        raise SystemExit(check())
     run()
