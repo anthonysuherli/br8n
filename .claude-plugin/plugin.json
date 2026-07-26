@@ -1,5 +1,10 @@
 {
   "name": "br8n",
+  "version": "1.1.0",
+  "homepage": "https://github.com/anthonysuherli/br8n",
+  "repository": "https://github.com/anthonysuherli/br8n",
+  "license": "MIT",
+  "keywords": ["context", "resume", "knowledge-base", "capture", "mcp"],
   "description": "A self-maintaining, portable personal knowledge base. Captures developer context in the background, distills it into a cross-repo graph, and asks for guidance at one seam: its schema. Skills: /br8n:pickup (where I was + cross-repo selector), /br8n:capture (save context), /br8n:search (grounded answer), /br8n:explore (gap-fill), /br8n:activity (cross-repo work graph), /br8n:schema (design/reshape the KG ontology). Backed by the br8n MCP server.",
   "author": {
     "name": "Anthony Suherli",
@@ -14,7 +19,8 @@
     "./skills/schema",
     "./skills/notes",
     "./skills/docs",
-    "./skills/journal"
+    "./skills/journal",
+    "./skills/timeline"
   ],
   "hooks": "./hooks/hooks.json"
 }

@@ -1,0 +1,41 @@
+#!/bin/sh
+# Resolve a python that can actually run br8n, and exec it with "$@".
+#
+# Search order:
+#   1. $BR8N_PYTHON          — explicit override, always wins
+#   2. <plugin>/backend/.venv — a contributor's existing dev venv
+#   3. ~/.br8n/venv          — the venv bin/br8n-mcp bootstraps
+#   4. python3 on PATH       — only when br8n is genuinely installed there
+#
+# Exits 127 WITHOUT bootstrapping when nothing is usable. Hooks call this and are
+# fail-silent by design, so they must never block a session building a venv; the
+# MCP launcher (bin/br8n-mcp) owns bootstrapping instead. That makes this script
+# the single definition of "usable", which br8n-mcp reuses by probing its exit code.
+set -eu
+
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}"
+BOOTSTRAP_VENV="${BR8N_HOME:-$HOME/.br8n}/venv"
+
+# Import a module that pulls the real dependency tree, not just the bare package:
+# a source checkout on sys.path satisfies `import br8n` while missing every dep.
+# Probing from / stops the caller's working directory from injecting that source
+# tree — Claude Code can start this server with an arbitrary cwd.
+usable() {
+  [ -x "$1" ] || return 1
+  ( CDPATH= cd / && "$1" -c 'import br8n.interfaces.mcp.server' ) >/dev/null 2>&1
+}
+
+for py in \
+  "${BR8N_PYTHON:-}" \
+  "$PLUGIN_ROOT/backend/.venv/bin/python" \
+  "$BOOTSTRAP_VENV/bin/python"
+do
+  [ -n "$py" ] || continue
+  if usable "$py"; then exec "$py" "$@"; fi
+done
+
+if command -v python3 >/dev/null 2>&1 && usable "$(command -v python3)"; then
+  exec python3 "$@"
+fi
+
+exit 127

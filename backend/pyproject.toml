@@ -1,10 +1,19 @@
 [project]
-name = "br8n-backend"
-version = "0.1.0"
+name = "br8n"
+version = "1.1.0"
 description = "br8n — self-contained context-capture and resume engine."
+readme = "README.md"
 license = "MIT"
-authors = [{ name = "Anthony Suherli" }]
+authors = [{ name = "Anthony Suherli", email = "anthonysuherli@gmail.com" }]
 requires-python = ">=3.11"
+keywords = ["claude-code", "mcp", "context", "knowledge-base", "developer-tools"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries",
+]
 
 dependencies = [
   # Web
@@ -21,6 +30,9 @@ dependencies = [
   "anthropic>=0.104.1",
 
   # Storage / auth
+  # sqlite-vec is imported at module scope by br8n.store.sqlite, which the
+  # default (local) backend always loads — it is a hard dep, not an extra.
+  "sqlite-vec>=0.1.6",
   "supabase>=2.28.3",
   "asyncpg>=0.31.0",
   "pyjwt[crypto]>=2.10.1",
@@ -40,6 +52,15 @@ dependencies = [
   "jinja2>=3.1.4",
 ]
 
+[project.scripts]
+br8n-mcp = "br8n.interfaces.mcp.server:main"
+br8n-server = "br8n.api.main:run"
+
+[project.urls]
+Homepage = "https://github.com/anthonysuherli/br8n"
+Repository = "https://github.com/anthonysuherli/br8n"
+Issues = "https://github.com/anthonysuherli/br8n/issues"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.4.2",
@@ -50,7 +71,7 @@ dev = [
 ]
 
 [build-system]
-requires = ["setuptools>=68.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

@@ -1,8 +1,9 @@
 {
-  "br8n": {
-    "type": "stdio",
-    "command": "/Users/anthonysuherli/Projects/br8n/backend/.venv/bin/python",
-    "args": ["-m", "br8n.interfaces.mcp.server"],
-    "cwd": "/Users/anthonysuherli/Projects/br8n/backend"
+  "mcpServers": {
+    "br8n": {
+      "type": "stdio",
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/br8n-mcp",
+      "args": []
+    }
   }
 }

@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python ${CLAUDE_PLUGIN_ROOT}/hooks/preamble-inject.py",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/br8n-python ${CLAUDE_PLUGIN_ROOT}/hooks/preamble-inject.py",
             "timeout": 8
           }
         ]
@@ -19,12 +19,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python ${CLAUDE_PLUGIN_ROOT}/hooks/first-run-init.py",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/br8n-python ${CLAUDE_PLUGIN_ROOT}/hooks/first-run-init.py",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "python ${CLAUDE_PLUGIN_ROOT}/hooks/auto-capture.py",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/br8n-python ${CLAUDE_PLUGIN_ROOT}/hooks/auto-capture.py",
             "timeout": 30
           }
         ]
@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python ${CLAUDE_PLUGIN_ROOT}/hooks/session-note.py",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/br8n-python ${CLAUDE_PLUGIN_ROOT}/hooks/session-note.py",
             "timeout": 30
           }
         ]

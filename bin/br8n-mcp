@@ -1,0 +1,72 @@
+#!/bin/sh
+# Launcher for the br8n MCP server.
+#
+# Delegates interpreter resolution to bin/br8n-python. If nothing usable exists
+# yet, bootstraps a venv at ~/.br8n/venv from the bundled source tree (or falls
+# back to the published package via uvx when there is no source tree).
+#
+# This is the ONE place allowed to bootstrap: an MCP server start can afford a
+# slow first run, whereas a session hook cannot.
+#
+# Diagnostics go to stderr — stdout is the MCP stdio channel and must stay clean.
+set -eu
+
+BIN_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(CDPATH= cd -- "$BIN_DIR/.." && pwd)}"
+BACKEND_DIR="$PLUGIN_ROOT/backend"
+BOOTSTRAP_VENV="${BR8N_HOME:-$HOME/.br8n}/venv"
+
+log() { printf 'br8n: %s\n' "$1" >&2; }
+
+# Already installed somewhere? br8n-python owns the definition of "usable" and
+# exits 127 when nothing qualifies, so probing it with a no-op is the whole test.
+if "$BIN_DIR/br8n-python" -c 'pass' >/dev/null 2>&1; then
+  exec "$BIN_DIR/br8n-python" -m br8n.interfaces.mcp.server
+fi
+
+# No source tree to build from — try the published package.
+if [ ! -f "$BACKEND_DIR/pyproject.toml" ]; then
+  if command -v uvx >/dev/null 2>&1; then
+    log "no source tree found; running published package via uvx"
+    exec uvx --from br8n br8n-mcp
+  fi
+  log "FATAL: no br8n install found, and no source tree at $BACKEND_DIR"
+  log "       fix: 'pip install br8n', or set BR8N_PYTHON to a python that has it"
+  exit 1
+fi
+
+PY=""
+for candidate in python3.12 python3.11 python3; do
+  command -v "$candidate" >/dev/null 2>&1 || continue
+  if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)' 2>/dev/null; then
+    PY="$candidate"
+    break
+  fi
+done
+
+if [ -z "$PY" ]; then
+  log "FATAL: need python >= 3.11 on PATH to bootstrap (tried python3.12, python3.11, python3)"
+  exit 1
+fi
+
+log "first run: creating $BOOTSTRAP_VENV and installing br8n (this takes a minute)"
+mkdir -p "$(dirname -- "$BOOTSTRAP_VENV")"
+if ! "$PY" -m venv "$BOOTSTRAP_VENV" >&2; then
+  log "FATAL: could not create venv at $BOOTSTRAP_VENV"
+  exit 1
+fi
+"$BOOTSTRAP_VENV/bin/python" -m pip install --quiet --upgrade pip >&2 \
+  || log "warning: pip self-upgrade failed; continuing"
+if ! "$BOOTSTRAP_VENV/bin/python" -m pip install --quiet "$BACKEND_DIR" >&2; then
+  log "FATAL: install failed. Retry by hand to see the error:"
+  log "       $BOOTSTRAP_VENV/bin/python -m pip install $BACKEND_DIR"
+  exit 1
+fi
+
+if "$BIN_DIR/br8n-python" -c 'pass' >/dev/null 2>&1; then
+  log "bootstrap complete"
+  exec "$BIN_DIR/br8n-python" -m br8n.interfaces.mcp.server
+fi
+
+log "FATAL: bootstrap finished but br8n is still not importable"
+exit 1

@@ -19,3 +19,16 @@ out/
 *.log
 .worktrees/
 .claude/scheduled_tasks.lock
+
+# Per-machine Claude settings — .claude/settings.json is the shared project
+# config and IS tracked; local overrides never are.
+.claude/settings.local.json
+
+# Local data / build products (currently absent by luck, not by rule)
+*.db
+*.db-journal
+*.sqlite3
+.br8n/
+DerivedData/
+# ios-app is XcodeGen-driven: project.yml is the source, .xcodeproj is generated.
+*.xcodeproj/
