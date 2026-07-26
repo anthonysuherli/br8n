@@ -13,6 +13,16 @@ from br8n.config import get_config, get_settings
 _client: AsyncOpenAI | None = None
 
 
+def embeddings_configured() -> bool:
+    """True when some embedding credential is present.
+
+    Callers that can degrade (capture stores an unembedded finding) check this
+    instead of catching an auth error, so a genuine API failure stays loud.
+    """
+    settings = get_settings()
+    return bool(settings.ai_gateway_api_key or settings.openai_api_key)
+
+
 def _get_client() -> AsyncOpenAI:
     global _client
     if _client is None:

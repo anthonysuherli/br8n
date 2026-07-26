@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+
 from br8n.agent.state import TenantContext
 from br8n.agent.synopsis import schedule_rebuild
 from br8n.capture.adapter import snapshot_to_finding
 from br8n.capture.models import WorkspaceSnapshot
-from br8n.clients.embeddings import embed_batch
+from br8n.clients.embeddings import embed_batch, embeddings_configured
 from br8n.store import get_store
+
+logger = logging.getLogger(__name__)
 
 
 def _invalidate_primer_cache(snap: WorkspaceSnapshot) -> None:
@@ -32,7 +36,15 @@ async def persist_snapshot(ctx: TenantContext, snap: WorkspaceSnapshot) -> str:
     so the resume card stays current without blocking the capture response.
     """
     payload = snapshot_to_finding(snap)
-    [embedding] = await embed_batch([payload["content"]])
+    # Capture is the core loop and must work on a bare install. With no embedding
+    # credential the finding is stored unembedded — it still shows on the resume
+    # card and in chronological surfaces, it just can't be reached by semantic
+    # search until a key is set. A configured-but-failing key still raises.
+    embedding = None
+    if embeddings_configured():
+        [embedding] = await embed_batch([payload["content"]])
+    else:
+        logger.info("no embedding credential; storing snapshot without an embedding")
     row = {
         "org_id": ctx.org_id,
         "kb_id": ctx.kb_id,
