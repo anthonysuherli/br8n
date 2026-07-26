@@ -91,7 +91,7 @@ primitives (Findings, pgvector search, tap/preamble) from chat to automatic capt
 Slash commands from inside any Claude Code session:
 
 ```
-/br8n:resume          →  Show the current repo/branch resume card
+/br8n:pickup          →  Show the current repo/branch resume card
 /br8n:capture         →  Save a snapshot right now
 /br8n:search <q>      →  Ask a question, grounded in your session history
 /br8n:explore <topic> →  Force the gap-fill pipeline
@@ -150,7 +150,7 @@ The paid value props — **cross-machine sync**, **cross-repo search**, **manage
         /br8n:capture → br8n saves the snapshot
         
 15:47 — [Back from meeting]
-        /br8n:resume → resume card appears:
+        /br8n:pickup → resume card appears:
         "🔸 JWT validation is caching stale tokens"
         Recent context shown. No "where was I?" moment.
 ```
@@ -162,7 +162,7 @@ You're on fix/session-timeout, about to switch to main
     
 Hours later, switch back:
     git checkout fix/session-timeout
-    /br8n:resume → resumes from that branch
+    /br8n:pickup → resumes from that branch
     → shows the last hypothesis + snapshots
 ```
 
@@ -179,18 +179,31 @@ Claude Code queries your captured session history
 
 ## Quick start
 
-### 1. Backend setup
+Install the Claude Code plugin — no venv, no path editing. The plugin's MCP server 
+bootstraps its own environment on first run.
 
-The local tier needs `sqlite-vec`; cloud tier needs Supabase creds (optional).
-
-```bash
-cd backend
-python3.11 -m venv .venv
-.venv/bin/pip install -e ".[dev]" sqlite-vec
-cp .env.example .env
+```
+/plugin marketplace add anthonysuherli/br8n
+/plugin install br8n@br8n
 ```
 
-**Start the API:**
+Reload the session, then use `/br8n:pickup`, `/br8n:capture`, etc. Data lives in 
+`~/.br8n/brain.db` on the free/local tier.
+
+**What works without any key:** capture and resume. Snapshots are stored without 
+embeddings, so the resume card, the hypothesis and the snapshot trail all work with no 
+account and no key at all.
+
+**What needs a key:** semantic search (`/br8n:search`) needs an embedding key — 
+`AI_GATEWAY_API_KEY` or `OPENAI_API_KEY`. The explore / gap-fill pipeline needs that 
+*and* `TAVILY_API_KEY` for web search.
+
+Sanity-check a local install with `python -m br8n.api.main --check` — it reports your 
+Python version, which backend tier is configured, whether `sqlite-vec` loads, whether 
+the DB path is writable, and whether the embedding and explore keys are present. 
+Anything missing is named explicitly.
+
+### Running the API directly (optional)
 
 **Free/local** (SQLite, single device):
 ```bash
@@ -202,26 +215,20 @@ BR8N_BACKEND=local python -m br8n.api.main   # listens 127.0.0.1:8002
 BR8N_BACKEND=cloud uvicorn br8n.api.main:app --reload --port 8002
 ```
 
-Set `OPENAI_API_KEY` for embeddings. Optionally set `TAVILY_API_KEY` for the explore 
-pipeline. Data lives in `~/.br8n/brain.db` (local) or Supabase (cloud).
+### From source (contributors)
 
-### 2. Claude Code MCP server (optional)
+Working on br8n itself, rather than using it:
 
-Add to `~/.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "br8n": {
-      "command": "python",
-      "args": ["-m", "br8n.interfaces.mcp.server"],
-      "cwd": "/path/to/br8n/backend"
-    }
-  }
-}
+```bash
+git clone https://github.com/anthonysuherli/br8n
+cd br8n/backend
+python3.11 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+cp .env.example .env
 ```
 
-Then use `/br8n:resume`, `/br8n:capture`, etc. in Claude Code.
+Once published, `pip install br8n` will also work as a plain package install; the 
+plugin marketplace is the supported path today.
 
 ## Configuration
 
@@ -256,7 +263,7 @@ See [`CLAUDE.md`](CLAUDE.md) for:
 ## Status
 
 - [x] **Core engine** — capture, resume, explore pipelines
-- [x] **Claude Code plugin** — slash commands (`/br8n:resume`, etc.)
+- [x] **Claude Code plugin** — slash commands (`/br8n:pickup`, etc.)
 - [x] **iOS companion** — native SwiftUI read spine (projects, resume cards, activity)
 - [x] **Storage tiers** — free (SQLite) and paid (Supabase) in one codebase
 - [x] **Multi-user cloud auth (backend)** — per-user Supabase JWT tenancy, per-org isolation, `/v1/auth/apple` + `/v1/auth/refresh`

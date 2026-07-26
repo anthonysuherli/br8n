@@ -58,7 +58,11 @@ br8n fully standalone.
   + `/v1/resume?format=json` + `/v1/activity/stats`. XcodeGen project (`project.yml`,
   no checked-in `.xcodeproj`). Design: `docs/plans/2026-05-30-ios-companion-design.md`
 - `skills/` — Claude Code plugin skills (built; see Plugin section below)
-- `.claude-plugin/` — plugin manifest + local dev marketplace; root `.mcp.json` wires the br8n MCP server
+- `.claude-plugin/` — plugin manifest + marketplace; root `.mcp.json` wires the br8n
+  MCP server through `bin/br8n-mcp`
+- `bin/` — `br8n-python` (resolves an interpreter that can run br8n; exits 127 rather
+  than bootstrapping, so hooks never block) and `br8n-mcp` (the MCP launcher, the one
+  place allowed to bootstrap `~/.br8n/venv` on first run)
 
 ### What's reused from the fork
 
@@ -131,17 +135,25 @@ implemented. Do not document them as shipping.
 
 ## Setup
 
+This is the **contributor** path (working on br8n itself). To *use* br8n, install the
+Claude Code plugin instead — see the Plugin section below; it bootstraps its own
+environment.
+
 `uv` is the intended toolchain, but it may not be installed — the venv reality is
-plain `python3.11 -m venv`. The local tier additionally needs `sqlite-vec`.
+plain `python3.11 -m venv`. `sqlite-vec` is a declared dependency, so it installs
+with the package (don't pass it by hand).
 
 ```bash
 cd backend
 python3.11 -m venv .venv          # or: uv venv
-.venv/bin/pip install -e ".[dev]" sqlite-vec   # or: uv sync && uv pip install sqlite-vec
+.venv/bin/pip install -e ".[dev]"   # or: uv sync
 cp .env.example .env              # pick the FREE or PAID block (see file)
 ```
 
-**Free / local tier** (SQLite, no Supabase, no API key, loopback-only):
+**Free / local tier** (SQLite, no Supabase, no server API key, loopback-only).
+Capture and resume work with no keys at all; semantic search needs an embedding key
+(`AI_GATEWAY_API_KEY` or `OPENAI_API_KEY`), and explore additionally needs
+`TAVILY_API_KEY`:
 
 ```bash
 BR8N_BACKEND=local python -m br8n.api.main   # blessed launcher: enforces loopback (auth is off)
@@ -161,7 +173,10 @@ python -m br8n.interfaces.mcp.server          # add to .claude/settings.json
 - Engine updates: when syncing engine improvements from delapan, apply them manually
   (copy file, rename imports). Do NOT re-introduce a cross-repo dep.
 - Auth: cloud tier uses a pre-shared API key (`BR8N_API_KEY` in .env, passed as a
-  Bearer token by clients); local tier requires no key (loopback-only, see Storage tiers)
+  Bearer token by clients); local tier requires no br8n auth key (loopback-only, see
+  Storage tiers). Separate from auth: an embedding key (`AI_GATEWAY_API_KEY` /
+  `OPENAI_API_KEY`) is what gates semantic search, and `TAVILY_API_KEY` gates explore —
+  capture/resume run without either.
 - Supabase (cloud tier): same instance and schema as delapan (no migration divergence)
 - KB naming: project = workspace folder name, kb = git branch name
 
@@ -248,15 +263,21 @@ skills/
 
 Status: **built** — MCP tools, skill Markdown files, plugin manifest
 (`.claude-plugin/plugin.json`), local dev marketplace
-(`.claude-plugin/marketplace.json`), and the root `.mcp.json` (bare
-`{server: {...}}` plugin format) all exist.
+(`.claude-plugin/marketplace.json`), and the root `.mcp.json` (documented
+`{"mcpServers": {...}}` plugin format) all exist. Claude Code currently accepts a
+bare `{server: {...}}` mapping too — the official marketplace contains both shapes
+— but `mcpServers` is the documented form, so that is what we ship.
 
-**Load it** (local dev marketplace → install → enable; reload the session after):
+**Load it** (marketplace → install → enable; reload the session after). This is the
+primary install path — no venv, no path editing: the plugin's MCP server bootstraps
+its own environment on first run.
 
 ```
-/plugin marketplace add /Users/suherli/Repositories/br8n
+/plugin marketplace add anthonysuherli/br8n
 /plugin install br8n@br8n
 ```
 
-The `.mcp.json` runs the MCP server from `backend/`, so that dir needs br8n +
-deps installed (`cd backend && uv sync`).
+The `.mcp.json` launches the MCP server through a bootstrap wrapper, which creates
+and populates its own environment on first run — no manual venv or `uv sync` needed
+to *use* the plugin. (Contributors working on the engine still want the `backend/`
+editable install from the Setup section above.)

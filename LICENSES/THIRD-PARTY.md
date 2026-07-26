@@ -134,7 +134,7 @@ triggered, and br8n may ship under MIT without restriction. (`orjson` and
 | tavily-python | 0.7.25 | MIT License | [link](https://github.com/tavily-ai/tavily-python) |
 | watchfiles | 1.2.0 | MIT License | [link](https://github.com/samuelcolvin/watchfiles) |
 | tiktoken | 0.13.0 | MIT License Copyright (c) 2022 OpenAI, Shantanu Jain Permiss | [link](https://github.com/openai/tiktoken) |
-| sqlite-vec | 0.1.9 | MIT License, Apache License, Version 2.0 | [link](https://TODO.com) |
+| sqlite-vec | 0.1.9 | MIT License, Apache License, Version 2.0 | [link](https://github.com/asg017/sqlite-vec) |
 | orjson | 3.11.9 | MPL-2.0 AND (Apache-2.0 OR MIT) | [link](https://github.com/ijl/orjson) |
 | tqdm | 4.67.3 | MPL-2.0 AND MIT | [link](https://tqdm.github.io) |
 | certifi | 2026.5.20 | Mozilla Public License 2.0 (MPL 2.0) | [link](https://github.com/certifi/python-certifi) |

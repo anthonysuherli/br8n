@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>br8n — install &amp; quickstart</title>
-<meta name="description" content="Install br8n and run the capture→resume loop in 60 seconds. Free local tier — SQLite, loopback-only, no account. Plus Claude Code and MCP wiring." />
+<meta name="description" content="Install br8n and run the capture→resume loop in 60 seconds. Free local tier — SQLite, loopback-only, no account, and capture/resume need no key. Plus Claude Code and MCP wiring." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -23,7 +23,7 @@
         <a href="access.html">access</a>
         <a href="install.html" class="active">install</a>
       </div>
-      <a class="nav-repo hide-sm" href="https://github.com/" target="_blank" rel="noopener">repo ↗</a>
+      <a class="nav-repo hide-sm" href="https://github.com/anthonysuherli/br8n" target="_blank" rel="noopener">repo ↗</a>
       <a class="nav-cta" href="#quickstart">install free</a>
     </div>
   </nav>
@@ -33,7 +33,7 @@
     <div class="wrap">
       <div class="kicker"><span class="mark">◌</span> install</div>
       <h1>Capturing in 60 seconds.</h1>
-      <p class="lead">Install the package, start the local API on 127.0.0.1, capture once — then come back to a populated resume card. No account, no key; the loopback backend keeps everything on your machine.</p>
+      <p class="lead">Install the Claude Code plugin, capture once — then come back to a populated resume card. No account, and capture&nbsp;→&nbsp;resume needs no key at all; the loopback backend keeps everything on your machine.</p>
     </div>
   </section>
 
@@ -51,64 +51,52 @@
           <div class="qs-step">
             <span class="qs-num">1</span>
             <div>
-              <h3>Install the package</h3>
-              <p>The local tier additionally needs <span class="id">sqlite-vec</span> for vector search on SQLite.</p>
+              <h3>Install the plugin</h3>
+              <p>No venv, no path editing — the plugin's MCP server bootstraps its own environment on first run.</p>
               <div class="install">
                 <span class="dollar">$</span>
-                <code>pip install br8n sqlite-vec</code>
-                <button class="copy" data-copy="pip install br8n sqlite-vec" aria-label="copy install command">copy</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="qs-step">
-            <span class="qs-num">2</span>
-            <div>
-              <h3>Start the local API</h3>
-              <p>The blessed launcher binds <span class="id">127.0.0.1</span> and turns auth off — safe because it never leaves loopback.</p>
-              <div class="install">
-                <span class="dollar">$</span>
-                <code>BR8N_BACKEND=local python -m br8n.api.main</code>
-                <button class="copy" data-copy="BR8N_BACKEND=local python -m br8n.api.main" aria-label="copy run command">copy</button>
-              </div>
-              <div class="serving"><span class="ok">●</span> serving on http://127.0.0.1:8000 — loopback only</div>
-            </div>
-          </div>
-
-          <div class="qs-step">
-            <span class="qs-num">3</span>
-            <div>
-              <h3>Sanity-check the setup <span style="color:var(--dim2); font-weight:400; font-size:12px;">(optional)</span></h3>
-              <p>Confirms the database, <span class="id">sqlite-vec</span>, and the loopback bind before you wire anything up.</p>
-              <div class="install">
-                <span class="dollar">$</span>
-                <code>python -m br8n.api.main --check</code>
-                <button class="copy" data-copy="python -m br8n.api.main --check" aria-label="copy check command">copy</button>
-              </div>
-              <div class="serving"><span class="ok">●</span> ✓ db &nbsp; ✓ sqlite-vec &nbsp; ✓ loopback</div>
-            </div>
-          </div>
-
-          <div class="qs-step">
-            <span class="qs-num">4</span>
-            <div>
-              <h3>Wire it into Claude Code</h3>
-              <p>Add the local dev marketplace, install the plugin, then <strong>reload the session</strong> so the MCP server connects.</p>
-              <div class="install">
-                <span class="dollar">$</span>
-                <code>/plugin marketplace add /path/to/br8n</code>
-                <button class="copy" data-copy="/plugin marketplace add /path/to/br8n" aria-label="copy marketplace command">copy</button>
+                <code>/plugin marketplace add anthonysuherli/br8n</code>
+                <button class="copy" data-copy="/plugin marketplace add anthonysuherli/br8n" aria-label="copy marketplace command">copy</button>
               </div>
               <div class="install">
                 <span class="dollar">$</span>
                 <code>/plugin install br8n@br8n</code>
                 <button class="copy" data-copy="/plugin install br8n@br8n" aria-label="copy plugin install command">copy</button>
               </div>
-              <p style="margin-top:14px;">Then capture and resume from any session:</p>
+              <p style="margin-top:14px;">Then <strong>reload the session</strong> so the MCP server connects.</p>
+            </div>
+          </div>
+
+          <div class="qs-step">
+            <span class="qs-num">2</span>
+            <div>
+              <h3>Capture, then come back</h3>
+              <p>Capture and resume work with no key at all — snapshots are stored without embeddings.</p>
               <div class="install">
                 <span class="dollar">›</span>
-                <code>/br8n:capture &nbsp;·&nbsp; /br8n:resume</code>
+                <code>/br8n:capture &nbsp;·&nbsp; /br8n:pickup</code>
                 <button class="copy" data-copy="/br8n:capture" aria-label="copy skill command">copy</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="qs-step">
+            <span class="qs-num">3</span>
+            <div>
+              <h3>Add keys for search &amp; explore <span style="color:var(--dim2); font-weight:400; font-size:12px;">(optional)</span></h3>
+              <p>Semantic search needs an embedding key — <span class="id">AI_GATEWAY_API_KEY</span> or <span class="id">OPENAI_API_KEY</span>. The explore / gap-fill pipeline needs that plus <span class="id">TAVILY_API_KEY</span> for web search. Without them, capture and resume still work.</p>
+            </div>
+          </div>
+
+          <div class="qs-step">
+            <span class="qs-num">4</span>
+            <div>
+              <h3>Sanity-check the setup <span style="color:var(--dim2); font-weight:400; font-size:12px;">(optional)</span></h3>
+              <p>Reports your Python version, which backend tier is configured, whether <span class="id">sqlite-vec</span> loads, whether the DB path is writable, and whether the embedding and explore keys are present. Anything missing is named explicitly.</p>
+              <div class="install">
+                <span class="dollar">$</span>
+                <code>python -m br8n.api.main --check</code>
+                <button class="copy" data-copy="python -m br8n.api.main --check" aria-label="copy check command">copy</button>
               </div>
             </div>
           </div>
@@ -116,9 +104,15 @@
           <div class="qs-step">
             <span class="qs-num">5</span>
             <div>
-              <h3>Or run the MCP server directly</h3>
-              <p>For any MCP-compatible client or agent — exposes <span class="id">br8n_capture</span>, <span class="id">br8n_resume</span>, <span class="id">br8n_explore</span>.</p>
+              <h3>Or run the API / MCP server directly</h3>
+              <p>The blessed launcher binds <span class="id">127.0.0.1</span> and turns auth off — safe because it never leaves loopback. The MCP entry point serves any MCP-compatible client or agent — exposing <span class="id">br8n_capture</span>, <span class="id">br8n_resume</span>, <span class="id">br8n_explore</span>.</p>
               <div class="install">
+                <span class="dollar">$</span>
+                <code>BR8N_BACKEND=local python -m br8n.api.main</code>
+                <button class="copy" data-copy="BR8N_BACKEND=local python -m br8n.api.main" aria-label="copy run command">copy</button>
+              </div>
+              <div class="serving"><span class="ok">●</span> serving on http://127.0.0.1:8002 — loopback only</div>
+              <div class="install" style="margin-top:12px;">
                 <span class="dollar">$</span>
                 <code>BR8N_BACKEND=local python -m br8n.interfaces.mcp.server</code>
                 <button class="copy" data-copy="BR8N_BACKEND=local python -m br8n.interfaces.mcp.server" aria-label="copy mcp command">copy</button>
@@ -130,7 +124,12 @@
 
         <div class="note">
           <span class="m">◌</span>
-          <span>The free tier is local-first and verifiable: SQLite at <code>~/.br8n/brain.db</code>, bound to loopback, no account and no API key. Your code context never leaves your laptop.</span>
+          <span>The free tier is local-first and verifiable: SQLite at <code>~/.br8n/brain.db</code>, bound to loopback, no account. Capture and resume need no key; search and explore need one. Your code context never leaves your laptop.</span>
+        </div>
+
+        <div class="note">
+          <span class="m">◌</span>
+          <span>Working <em>on</em> br8n rather than with it? Clone the repo, then <code>cd backend</code> and <code>pip install -e ".[dev]"</code> into a Python 3.11 venv. That's the contributor path, not the try-it path.</span>
         </div>
       </div>
 
@@ -181,7 +180,7 @@
           </div>
           <div class="foot-col">
             <div class="h">repo</div>
-            <a href="#">github</a><a href="#">releases</a><a href="#">issues</a>
+            <a href="https://github.com/anthonysuherli/br8n" target="_blank" rel="noopener">github</a><a href="https://github.com/anthonysuherli/br8n/releases" target="_blank" rel="noopener">releases</a><a href="https://github.com/anthonysuherli/br8n/issues" target="_blank" rel="noopener">issues</a>
           </div>
           <div class="foot-col">
             <div class="h">docs</div>
@@ -189,7 +188,7 @@
           </div>
           <div class="foot-col">
             <div class="h">license</div>
-            <a href="#">MIT</a><a href="#">security</a><a href="#">changelog</a>
+            <a href="https://github.com/anthonysuherli/br8n/blob/main/LICENSE" target="_blank" rel="noopener">MIT</a><a href="https://github.com/anthonysuherli/br8n/blob/main/.github/SECURITY.md" target="_blank" rel="noopener">security</a><a href="https://github.com/anthonysuherli/br8n/blob/main/CHANGELOG.md" target="_blank" rel="noopener">changelog</a>
           </div>
         </div>
       </div>

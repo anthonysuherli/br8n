@@ -10,8 +10,8 @@ host or open the pages directly.
 |---|---|
 | `index.html` | **Landing** — hero + live resume card, the tax, the two-step loop (teaser), a compact tiers strip (free-led, cloud "soon"), a slim install CTA. Concise; links out to the deeper pages. |
 | `how-it-works.html` | **How it works** — the resume card in context, then the knowledge engine (capture → distill → map → tap) and the live preamble artifact. |
-| `access.html` | **Access anywhere** — the surfaces grid: HTTP API / Claude Code / MCP / VS Code shipping; Teams / Discord "coming soon". |
-| `install.html` | **Install & quickstart** — Free/Local and Cloud(soon) tabs; pip install, the local API, `--check`, Claude Code plugin, MCP server, VS Code. |
+| `access.html` | **Access anywhere** — the surfaces grid: HTTP API / Claude Code / MCP shipping; Teams / Discord "coming soon". |
+| `install.html` | **Install & quickstart** — Free/Local and Cloud(soon) tabs; the Claude Code plugin (primary path), the capture→pickup loop, optional keys, `--check`, and the direct API / MCP server entry points. |
 
 Shared chrome (nav, footer) is duplicated across pages by hand — at four pages that's
 cheaper than a build step. The nav's active page is marked with `class="active"`.
@@ -32,6 +32,10 @@ Implemented from the Claude Design handoff `br8n — Terminal.html` (Direction A
 The cloud tier and its paid value props (sync, cross-repo, teams, managed keys) are
 **designed, not built** — the site leads free-first and chips every roadmap surface
 "coming soon", never as shipping. Keep it that way when editing.
+
+Same rule for keys: capture and resume genuinely need **no key**, but semantic search
+needs an embedding key (`AI_GATEWAY_API_KEY` or `OPENAI_API_KEY`) and explore also needs
+`TAVILY_API_KEY`. Never flatten that into a blanket "no key needed".
 
 ## Interactive (`site.js`)
 
