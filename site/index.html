@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>br8n — a knowledge base that maintains itself</title>
-<meta name="description" content="br8n captures what you were working on, distills it into one personal graph, and keeps it organized in the background — across every repo. You manage it by conversation; it asks for guidance at one seam: when its schema needs to change. Local-first, loopback-only." />
+<title>br8n — git stash for your head</title>
+<meta name="description" content="br8n saves what you were thinking when you got pulled away — branch, open files, diff, and the one-line why — and replays it as a 30-second resume card when you come back. Free, local-first, MIT. A Claude Code plugin and MCP server." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -33,22 +33,22 @@
     <div class="wrap">
       <div class="t-hero">
         <div>
-          <div class="kicker"><span class="mark">◌</span> br8n · the self-maintaining knowledge base</div>
-          <h1>A knowledge base
-that maintains itself.</h1>
+          <div class="kicker"><span class="mark">◌</span> br8n · git stash for your head</div>
+          <h1>You'll forget what
+this branch was for.</h1>
 
-          <p class="subline">br8n captures what you were working on, distills it into one personal graph, and keeps it organized in the background — across every repo. You manage it by conversation; it asks for your guidance at exactly one seam: when its schema needs to change.</p>
+          <p class="subline">br8n saves what you were thinking the moment you get pulled away — branch, open files, the diff, and the one-line <em>why</em> — and hands it back as a 30-second resume card when you return. Your code is already saved. This is the part that isn't.</p>
 
-          <form class="hero-form" onsubmit="return false;">
-            <input type="email" placeholder="your email" aria-label="email for portable cloud early access" />
-            <button class="btn primary" type="submit">request cloud access ›</button>
-          </form>
-          <div class="hero-microcopy">free &amp; local today — <a href="install.html">install in two lines ›</a> &nbsp;·&nbsp; portable cloud, early access</div>
+          <div class="hero-ctas">
+            <a class="btn primary" href="install.html">install in two lines ›</a>
+            <a class="btn" href="https://github.com/anthonysuherli/br8n" target="_blank" rel="noopener">view on GitHub ›</a>
+          </div>
+          <div class="hero-microcopy">free &amp; local, MIT — no account, no API key to capture and resume</div>
 
           <div class="hero-chips">
-            <span class="hchip"><b>captures</b> by watching</span>
-            <span class="hchip"><b>distills</b> into concepts</span>
-            <span class="hchip"><b>guided</b> at the schema</span>
+            <span class="hchip"><b>captures</b> the why, not just the diff</span>
+            <span class="hchip"><b>replays</b> as a resume card</span>
+            <span class="hchip"><b>local</b> by default</span>
             <span class="hchip"><b>portable</b> · one graph, every repo</span>
           </div>
         </div>
@@ -61,16 +61,16 @@ that maintains itself.</h1>
             <span class="live"><span class="d"></span> live</span>
           </div>
           <div class="session-body">
-            <div class="ln"><span class="cmd">br8n</span> <span class="kw">capture</span> <span class="arg">dev · 4 files · auto-snapshot</span></div>
-            <div class="ln sub"><span class="ok">✓</span> <span class="arg">activity graph + concept distilled · background</span></div>
-            <div class="ln"><span class="cmd">br8n</span> <span class="kw">watch</span> <span class="arg">residual 7/20 · ontology drift ↑</span></div>
-            <div class="ln sub"><span class="gp">◆</span> <span class="hot">unplaced</span> <span class="session-tag">deployment</span> <span class="session-tag">rollback</span> <span class="session-tag">incident</span></div>
-            <div class="ln"><span class="cmd">br8n</span> <span class="kw">schema</span> <span class="arg">drift detected → propose</span></div>
-            <div class="ln sub"><span class="arg">one question at a time · you steer</span></div>
-            <div class="ln sub"><span class="add">+</span> <span class="hot">node</span> <span class="arg">Deployment</span> &nbsp;&nbsp;<span class="add">+</span> <span class="hot">edge</span> <span class="arg">caused→ Incident</span></div>
-            <div class="ln sub"><span class="ok">✓</span> <span class="arg">schema v3 · 7 residuals re-typed</span></div>
-            <div class="ln"><span class="cmd">br8n</span> <span class="kw">context</span> <span class="arg">repoA/dev → repoB/main</span></div>
-            <div class="ln sub"><span class="gp">▸</span> <span class="arg">~1,750 tokens · concepts over evidence · synced</span><span class="cursor-blk"></span></div>
+            <div class="ln"><span class="cmd">br8n</span> <span class="kw">capture</span> <span class="arg">main · 12 files · you're getting pulled away</span></div>
+            <div class="ln sub"><span class="ok">✓</span> <span class="arg">branch, diff, cursor, and the one-line why · background</span></div>
+            <div class="ln sub"><span class="arg">— two days later —</span></div>
+            <div class="ln"><span class="cmd">br8n</span> <span class="kw">pickup</span> <span class="arg">main</span></div>
+            <div class="ln sub"><span class="gp">◆</span> <span class="hot">why</span> <span class="arg">keyless resume returned an empty card</span></div>
+            <div class="ln sub"><span class="add">▸</span> <span class="hot">next</span> <span class="arg">fall back to recency in select_preamble</span></div>
+            <div class="ln sub"><span class="add">+</span> <span class="hot">branch</span> <span class="arg">main</span> &nbsp;&nbsp;<span class="add">+</span> <span class="hot">cursor</span> <span class="arg">preamble.py:128</span></div>
+            <div class="ln sub"><span class="gp">▸</span> <span class="session-tag">61 files</span> <span class="session-tag">+3127 −210</span> <span class="session-tag">357 passed</span></div>
+            <div class="ln"><span class="cmd">br8n</span> <span class="kw">pickup</span> <span class="arg">--all · every branch you left mid-thought</span></div>
+            <div class="ln sub"><span class="ok">✓</span> <span class="arg">back in 30 seconds · nothing rebuilt by hand</span><span class="cursor-blk"></span></div>
           </div>
         </div>
       </div>
@@ -83,20 +83,20 @@ that maintains itself.</h1>
       <div class="kicker"><span class="mark">◌</span> the problem</div>
       <div class="t-context tax-grid">
         <div>
-          <div class="stat">9.5<span class="unit">min</span></div>
-          <p class="tax-copy">The visible cost — the time to rebuild mental context after one interruption. The deeper cost is quieter: every insight you don't write down evaporates, and nothing you learn in one repo ever carries to the next.</p>
+          <div class="stat">23<span class="unit">min</span></div>
+          <p class="tax-copy">The measured cost of refocusing after a single interruption — <a href="https://www.ics.uci.edu/~gmark/chi08-mark.pdf" target="_blank" rel="noopener">Gloria Mark, UC Irvine</a>, and longer for complex code. Your editor restored every file. What it couldn't restore is the sentence you were holding in your head.</p>
         </div>
         <div class="reckon">
-          <div class="hdr"># knowledge that doesn't compound</div>
+          <div class="hdr"># what git already saves, and what it doesn't</div>
           <div class="eq">
-            <span><span class="n">6</span> switches</span>
-            <span class="op">×</span>
-            <span><span class="n">9.5</span> min</span>
+            <span><span class="n">git</span> the diff</span>
+            <span class="op">+</span>
+            <span><span class="n">br8n</span> the why</span>
             <span class="op">=</span>
-            <span class="total">≈57 min<span class="per">/day</span></span>
+            <span class="total">back in 30s<span class="per">/resume</span></span>
           </div>
           <div class="div"></div>
-          <p>Nearly an hour a day reconstructing state you already had — and a graph of hard-won context that resets to zero with every new repo. br8n keeps it instead, so the next session starts ahead.</p>
+          <p>A stash saves your code, not your reasoning — no open-file set, no cursor, no rationale. br8n captures the one line a diff can never recover: what you thought was wrong, and what you were about to try next.</p>
         </div>
       </div>
     </div>
@@ -106,7 +106,7 @@ that maintains itself.</h1>
   <section id="how" class="sec" style="padding:70px 0;">
     <div class="wrap">
       <div class="kicker"><span class="mark">◌</span> how it works</div>
-      <h2 class="sec-title">It maintains itself. You guide it once — at the schema.</h2>
+      <h2 class="sec-title">Capture on the way out. Resume on the way back in.</h2>
       <div class="engine-flow" style="grid-template-columns:repeat(3,1fr);">
         <div class="stage">
           <div class="sh">
@@ -119,22 +119,22 @@ that maintains itself.</h1>
         <div class="stage">
           <div class="sh">
             <span class="sn">02</span>
-            <span class="sv">guided</span>
+            <span class="sv">on return</span>
           </div>
-          <h3>Organize</h3>
-          <p>br8n tracks what doesn't fit its ontology. When that residual crosses a threshold — or you've collected enough to start — it offers, at a turn boundary, to <span class="id">design the schema</span> with you: one question at a time, you steer, it applies.</p>
+          <h3>Resume</h3>
+          <p>Run <span class="id">/br8n:pickup</span> and get one card: what you thought was happening, the branch, the files you had open, the diff you left behind — and the single next step future-you should take first. Read it in 30 seconds and start typing.</p>
         </div>
         <div class="stage">
           <div class="sh">
             <span class="sn">03</span>
-            <span class="sv">portable</span>
+            <span class="sv">across repos</span>
           </div>
-          <h3>Ground</h3>
-          <p>Anywhere you work, tap the graph for <span class="id">~1,750 tokens</span> of concepts over evidence — scoped to where you are, drawn from every repo. On the cloud tier the same slice follows you across machines.</p>
+          <h3>Carry</h3>
+          <p>Every capture also lands in a cross-repo work graph, so <span class="id">/br8n:pickup</span> can list every branch you've left mid-thought — in any project — and drop you back into whichever one you meant.</p>
         </div>
       </div>
       <p style="margin-top:26px; font-size:13px; color:var(--dim);">
-        Everything but the schema step runs in the background and fails silent. <a class="morelink" href="how-it-works.html">See the knowledge engine underneath ›</a>
+        Capture and distillation run in the background and fail silent — br8n never takes your turn. <a class="morelink" href="how-it-works.html">See the knowledge engine underneath ›</a>
       </p>
     </div>
   </section>
@@ -212,7 +212,7 @@ that maintains itself.</h1>
       <div class="foot-top">
         <div class="foot-brand">
           <span class="b"><span class="mark">◌</span> br8n</span>
-          <p>A knowledge base that maintains itself. Local-first, loopback-only, yours.</p>
+          <p>Git stash for your head. Local-first, loopback-only, yours.</p>
         </div>
         <div class="foot-cols">
           <div class="foot-col">

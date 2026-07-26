@@ -1,9 +1,11 @@
-# br8n
+# br8n — git stash for your head
 
-**One-command capture + instant resume.** br8n saves your thinking before you switch 
-away and replays it as a 30-second "where I was" card when you return. No more rebuilding 
-context by hand. Research puts the cost of refocusing after an interruption at about 
-23 minutes ([Gloria Mark, UC Irvine](https://www.ics.uci.edu/~gmark/chi08-mark.pdf)), 
+**You'll forget what this branch was for. br8n won't.** It saves what you were
+thinking the moment you get pulled away — branch, open files, the diff, and the
+one-line *why* — and hands it back as a 30-second resume card when you return.
+Your code is already saved; this is the part that isn't. Research puts the cost of
+refocusing after an interruption at about 23 minutes
+([Gloria Mark, UC Irvine](https://www.ics.uci.edu/~gmark/chi08-mark.pdf)),
 and longer for complex code. *(Snapshots are taken two ways today: automatically at 
 commit boundaries via an installed `post-commit` hook, and on demand with 
 `/br8n:capture`. There is no continuous watcher.)*
