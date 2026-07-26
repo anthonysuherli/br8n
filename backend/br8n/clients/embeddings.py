@@ -1,4 +1,5 @@
-"""Embedding client (adapted from Delapan)."""
+"""Embedding client (adapted from Delapan). Routes through the Vercel AI Gateway
+(OpenAI-compatible) when ``AI_GATEWAY_API_KEY`` is set, else direct OpenAI."""
 
 from __future__ import annotations
 
@@ -16,12 +17,15 @@ def _get_client() -> AsyncOpenAI:
     global _client
     if _client is None:
         settings = get_settings()
-        if not settings.openai_api_key:
-            raise RuntimeError(
-                "embeddings require OPENAI_API_KEY (needed in both the local and "
-                "cloud tiers); set it in the environment or .env"
+        # Prefer the AI Gateway (one credential for the whole pipeline, no OpenAI
+        # account needed); fall back to direct OpenAI when only OPENAI_API_KEY set.
+        if settings.ai_gateway_api_key:
+            _client = AsyncOpenAI(
+                api_key=settings.ai_gateway_api_key,
+                base_url=settings.ai_gateway_base_url,
             )
-        _client = AsyncOpenAI(api_key=settings.openai_api_key)
+        else:
+            _client = AsyncOpenAI(api_key=settings.openai_api_key)
     return _client
 
 

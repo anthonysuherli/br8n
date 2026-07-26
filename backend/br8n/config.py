@@ -34,13 +34,14 @@ class Settings(BaseSettings):
     supabase_jwt_secret: str | None = Field(default=None, alias="SUPABASE_JWT_SECRET")
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
 
-    # LLM provider keys. `openai_api_key` powers embeddings (needed in BOTH
-    # tiers) but stays optional here so Settings construction never explodes;
-    # the embedding client surfaces a clear error if it is actually missing.
+    # LLM provider keys. Embeddings prefer ai_gateway_api_key below and fall
+    # back to openai_api_key when unset (see clients/embeddings.py); both stay
+    # optional here so Settings construction never explodes.
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
 
-    # Vercel AI Gateway (Phase 3 explore) — cloud-only, optional.
+    # Vercel AI Gateway — routes explore's LLM calls and embeddings. Optional,
+    # works on both tiers.
     ai_gateway_api_key: str | None = Field(default=None, alias="AI_GATEWAY_API_KEY")
     ai_gateway_base_url: str = Field(
         default="https://ai-gateway.vercel.sh/v1", alias="AI_GATEWAY_BASE_URL"
