@@ -1,5 +1,7 @@
 # br8n — git stash for your head
 
+[**Site**](https://anthonysuherli.github.io/br8n/) · [install](https://anthonysuherli.github.io/br8n/install.html) · [how it works](https://anthonysuherli.github.io/br8n/how-it-works.html) · `pip install br8n`
+
 **You'll forget what this branch was for. br8n won't.** It saves what you were
 thinking the moment you get pulled away — branch, open files, the diff, and the
 one-line *why* — and hands it back as a 30-second resume card when you return.
