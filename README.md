@@ -227,8 +227,9 @@ python3.11 -m venv .venv
 cp .env.example .env
 ```
 
-Once published, `pip install br8n` will also work as a plain package install; the 
-plugin marketplace is the supported path today.
+`pip install br8n` also works as a plain package install, and ships the
+`br8n-mcp` and `br8n-server` entry points; the plugin marketplace remains the
+supported path for using br8n inside Claude Code.
 
 ## Configuration
 

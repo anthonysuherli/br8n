@@ -57,7 +57,7 @@ led with a command that did not exist. This release makes a clean clone work.
   chronological surfaces, and only semantic search is unavailable until a key is
   set. A configured-but-failing key still raises, so real outages stay loud.
 - The distribution is now named `br8n` (was `br8n-backend`), making the long-
-  advertised `pip install br8n` correct once published.
+  advertised `pip install br8n` correct. Published to PyPI as of v1.1.1.
 - `.mcp.json` uses `${CLAUDE_PLUGIN_ROOT}` instead of an absolute path into one
   machine's home directory.
 - Hooks invoke the resolved interpreter instead of a bare `python`, which on a
