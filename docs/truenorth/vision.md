@@ -33,6 +33,14 @@ initiation, thread governance, and reward.
    timeline + activity KG: shipped this week, threads closed vs. opened, a small-wins
    log (counters ADHD imposter-syndrome memory blur). Accrues automatically;
    missing a week breaks nothing.
+6. **Ship the Obsidian-observable KB.** Everything br8n knows for a user —
+   snapshots, notes, journal, timeline, and activity rollups — is defined and
+   observable as plain markdown files in a user-owned vault that opens cleanly
+   in Obsidian (frontmatter-typed, wikilinked, greppable). Derived indexes
+   (embeddings, caches) stay rebuildable from what the user can see. Whether
+   markdown is the canonical store or a faithfully synced projection is a design
+   decision, left to the spec — the vision-level commitment is: the user can
+   open their second brain and read it.
 
 ## Non-Goals
 
@@ -96,3 +104,8 @@ initiation, thread governance, and reward.
 ## Amendment Log
 
 <!-- Format: YYYY-MM-DD — [what changed and why] — Ratified by: [human initials or session note] -->
+
+2026-07-27 — Added End Goal 6 (Obsidian-observable KB): user requested a
+markdown/Obsidian-native data source; not covered by behavioral End Goals 1–5,
+so ratified as a first-class outcome rather than a detour. — Ratified by: user
+(in-session selection, 2026-07-27).
