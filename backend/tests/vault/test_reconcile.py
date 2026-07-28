@@ -1,4 +1,6 @@
 """Reconcile: Obsidian edits stick, new files adopt, deletes delete."""
+from pathlib import Path
+
 import pytest
 
 from br8n.vault import files as vfiles
@@ -108,3 +110,202 @@ async def test_reconcile_never_raises(store, monkeypatch):
     monkeypatch.setattr(layout, "vault_root", lambda: (_ for _ in ()).throw(OSError("boom")))
     counters = reconcile.reconcile(store, force=True)
     assert counters["scanned"] == 0  # degraded, no exception
+
+
+# --- C1: missing/re-pointed vault root must never wipe the index ------------
+
+
+@pytest.mark.asyncio
+async def test_repointed_root_does_not_wipe_index(store, monkeypatch, tmp_path):
+    import shutil
+
+    kb_id = _mk_kb(store)
+    fid = await _insert(store, kb_id)
+
+    # simulate the mount going away: the indexed file is genuinely gone AND
+    # the root now resolves elsewhere (empty) — the delete sweep must not
+    # mistake "scan saw nothing" for "everything was deleted"
+    shutil.rmtree(layout.vault_root())
+    monkeypatch.setenv("BR8N_VAULT_PATH", str(tmp_path / "fresh-empty-vault"))
+
+    counters = reconcile.reconcile(store, force=True, ignore_caps=True)
+
+    assert counters["deleted"] == 0
+    assert store.get_finding(kb_id, fid)["title"] == "Note"  # row untouched
+
+
+# --- C2: an Obsidian rename must not delete the just-re-adopted row --------
+
+
+@pytest.mark.asyncio
+async def test_rename_survives_reconcile(store):
+    import os
+
+    kb_id = _mk_kb(store)
+    fid = await _insert(store, kb_id)
+    old_path = Path(store.vault_path_for(fid))
+    new_path = old_path.with_name("renamed-" + old_path.name)
+    os.rename(old_path, new_path)
+
+    counters = reconcile.reconcile(store, force=True, ignore_caps=True)
+
+    assert counters["adopted"] == 1
+    assert counters["deleted"] == 0
+    row = store.get_finding(kb_id, fid)
+    assert row["title"] == "Note"
+    n = store._conn.execute(
+        "SELECT COUNT(*) AS n FROM findings WHERE id = ?;", (fid,)
+    ).fetchone()["n"]
+    assert n == 1
+
+
+# --- I1: the carry-over cursor must reach past the time cap ----------------
+
+
+@pytest.mark.asyncio
+async def test_cursor_scan_advances_past_time_cap(store, monkeypatch):
+    from br8n.config import get_config
+
+    kb_id = _mk_kb(store)
+    fids = [await _insert(store, kb_id, title=f"Note {i}") for i in range(5)]
+    paths = sorted(store.vault_path_for(f) for f in fids)
+    far_path = paths[-1]
+    far_fid = next(f for f in fids if store.vault_path_for(f) == far_path)
+
+    # edit the lexicographically-last file — the scan must eventually reach it
+    text = open(far_path, encoding="utf-8").read()
+    fm, _ = vfiles.parse(text)
+    fm["title"] = "Far edited"
+    open(far_path, "w", encoding="utf-8").write(
+        vfiles.serialize(fm, "# Far edited\n\nnew body")
+    )
+
+    cfg = get_config().vault
+    monkeypatch.setattr(cfg, "reconcile_time_cap_ms", 0)  # ~1 stat per pass
+
+    applied = False
+    for _ in range(len(paths) + 2):
+        counters = reconcile.reconcile(store, force=True)
+        if counters["updated"] == 1:
+            applied = True
+            break
+
+    assert applied, "far file was never reached by the cursor-driven scan"
+    assert store.get_finding(kb_id, far_fid)["title"] == "Far edited"
+
+
+# --- I3: a duplicated file (same br8n_id in two files) must not thrash -----
+
+
+@pytest.mark.asyncio
+async def test_duplicate_file_mints_fresh_id(store):
+    import shutil
+
+    kb_id = _mk_kb(store)
+    fid = await _insert(store, kb_id)
+    orig_path = Path(store.vault_path_for(fid))
+    dup_path = orig_path.with_name("dup-" + orig_path.name)
+    shutil.copy(orig_path, dup_path)
+
+    counters = reconcile.reconcile(store, force=True, ignore_caps=True)
+    assert counters["adopted"] == 1
+
+    listed = store.list_findings(kb_id, category="note")
+    assert listed["count"] == 2
+    ids = {f["id"] for f in listed["findings"]}
+    assert len(ids) == 2
+
+    fm1, _ = vfiles.parse(orig_path.read_text(encoding="utf-8"))
+    fm2, _ = vfiles.parse(dup_path.read_text(encoding="utf-8"))
+    assert fm1["br8n_id"] != fm2["br8n_id"]
+
+    counters2 = reconcile.reconcile(store, force=True, ignore_caps=True)
+    assert counters2["adopted"] == 0
+    assert counters2["updated"] == 0
+    assert counters2["deleted"] == 0
+    assert counters2["malformed"] == 0
+
+
+# --- I4: an abort mid-pass must roll back the shared connection ------------
+
+
+@pytest.mark.asyncio
+async def test_pass_abort_rolls_back_uncommitted_writes(store, monkeypatch):
+    import os
+
+    kb_id = _mk_kb(store)
+    fid = await _insert(store, kb_id)
+    deleted_path = store.vault_path_for(fid)
+    os.unlink(deleted_path)
+
+    d = layout.vault_root() / "notes" / "br8n" / "main"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "2026-07-27-1300-other.md").write_text("# Other\n\nbody\n")
+
+    real_exists = Path.exists
+
+    def flaky_exists(self):
+        if str(self) == deleted_path:
+            raise OSError("disk gone")
+        return real_exists(self)
+
+    monkeypatch.setattr(Path, "exists", flaky_exists)
+
+    counters = reconcile.reconcile(store, force=True, ignore_caps=True)  # must not raise
+
+    assert store._conn.in_transaction is False
+
+    monkeypatch.undo()  # restore Path.exists before the follow-up read
+    listed = store.list_findings(kb_id, category="note")
+    assert not any(f["title"] == "Other" for f in listed["findings"])
+    del counters  # only asserted not to raise above
+
+
+# --- M2: malformed files must stop re-suspecting every pass -----------------
+
+
+@pytest.mark.asyncio
+async def test_malformed_file_stops_resuspecting(store):
+    kb_id = _mk_kb(store)
+    fid = await _insert(store, kb_id)
+    path = store.vault_path_for(fid)
+    open(path, "w", encoding="utf-8").write("---\ntags: [broken\n---\n\nbody\n")
+
+    first = reconcile.reconcile(store, force=True)
+    assert first["malformed"] == 1
+
+    second = reconcile.reconcile(store, force=True)
+    assert second["malformed"] == 0
+    assert second["scanned"] >= 1
+
+
+# --- M4: tags must be clearable from Obsidian -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tags_cleared_from_obsidian(store):
+    kb_id = _mk_kb(store)
+    fid = await _insert(store, kb_id)
+    path = store.vault_path_for(fid)
+    text = open(path, encoding="utf-8").read()
+    fm, _ = vfiles.parse(text)
+    fm.pop("tags", None)
+    open(path, "w", encoding="utf-8").write(vfiles.serialize(fm, "# Note\n\nedited body"))
+
+    counters = reconcile.reconcile(store, force=True)
+    assert counters["updated"] == 1
+    row = store.get_finding(kb_id, fid)
+    assert row["tags"] == []
+
+
+# --- M1: _target_for must not leak ValueError into the malformed counter ---
+
+
+def test_target_for_outside_root_falls_back(tmp_path, monkeypatch):
+    monkeypatch.setenv("BR8N_VAULT_PATH", str(tmp_path / "vault"))
+    outside = tmp_path / "elsewhere" / "file.md"
+    outside.parent.mkdir(parents=True, exist_ok=True)
+    outside.write_text("# x\n")
+
+    assert reconcile._target_for(outside, {}) == ("unknown", "default", "finding")
+    assert reconcile._target_for(outside, {"project": "p", "kb": "k"}) == ("p", "k", "finding")
