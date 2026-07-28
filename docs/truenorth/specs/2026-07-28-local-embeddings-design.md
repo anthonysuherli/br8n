@@ -222,8 +222,26 @@ the visible signal that a rebuild is draining.
 
 1. On a keyless machine with the extra installed, a capture followed by a search
    returns semantically ranked results (not empty, not text-only).
-2. Removing an API key on a machine holding 1536-dim vectors rebuilds to 384 and
-   refills in the background; no crash, and search recovers without manual action.
+2. Removing an API key on a machine holding 1536-dim vectors **surfaces the switch
+   offer** rather than rebuilding silently: `br8n_embeddings_get` and `--check`
+   report the detected change and point at `/br8n:embeddings`, the existing space
+   is left intact, and the rebuild happens on confirmation. An auto-detected
+   change that would discard **nothing** still rebuilds immediately, so a fresh
+   keyless machine needs no interaction (criterion 1 is unaffected). No crash in
+   either case.
+
+   *Amended 2026-07-28 (ratified by the user in-session).* As originally written
+   this criterion required key removal to rebuild automatically. Review found that
+   provider resolution is environment-dependent: with the extra installed, opening
+   the store from any shell lacking `AI_GATEWAY_API_KEY` flipped remote/1536 →
+   local/384 and discarded every vector, and a shell with the key flipped it back
+   — and because `/br8n:capture` sweeps every live Claude Code session, two
+   sessions with divergent environments could ping-pong the space, each open
+   destroying the other's work. The destruction was silent and triggered by an
+   action ("open the store") no user perceives as a write. The original wording
+   also contradicted CLAUDE.md's ratified invariants — "gate decisions at turn
+   boundaries, never mid-flow" and "offer once, then go quiet" — so the criterion
+   was brought into line with the design philosophy rather than the reverse.
 3. `br8n_embeddings_set("local")` takes effect without restarting the MCP server, and
    `br8n_embeddings_get` reports `source: "settings"` with the queued rebuild size.
 4. `br8n_embeddings_set("local")` without the extra installed returns `ok: false` with
