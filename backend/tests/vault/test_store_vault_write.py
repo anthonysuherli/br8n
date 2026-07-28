@@ -86,6 +86,33 @@ async def test_delete_finding_unlinks_file(store):
 
 
 @pytest.mark.asyncio
+async def test_insert_survives_needs_embed_update_failure(store, monkeypatch):
+    """The needs_embed stamp is best-effort like the rest of the vault
+    lifecycle — a failure there must not break the insert."""
+    import sqlite3
+
+    kb_id = _mk_kb(store)
+    real = store._conn
+
+    class FlakyConn:
+        def execute(self, sql, *a):
+            if "SET needs_embed = 1" in sql:
+                raise sqlite3.OperationalError("disk I/O error")
+            return real.execute(sql, *a)
+
+        def __getattr__(self, name):
+            return getattr(real, name)
+
+    monkeypatch.setattr(store, "_conn", FlakyConn())
+    [fid] = await store.insert_findings(
+        [{"kb_id": kb_id, "title": "T", "content": "c", "category": "note",
+          "confidence": 1.0, "tags": [], "provenance": [], "embedding": None}]
+    )
+    monkeypatch.setattr(store, "_conn", real)
+    assert store.get_finding(kb_id, fid)["title"] == "T"  # row exists, no crash
+
+
+@pytest.mark.asyncio
 async def test_vault_write_failure_never_breaks_insert(store, monkeypatch):
     """Fail-silent: a broken vault path degrades to index-only insert."""
     from br8n.store import vault as vault_mod

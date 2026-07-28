@@ -34,6 +34,10 @@ class VaultStore(SQLiteStore):
         # rowless malformed files memoized as path -> (mtime, size) so the
         # same broken bytes count (and re-parse) once, not every pass
         self._malformed_seen: dict[str, tuple[float, int]] = {}
+        # finding ids currently being re-embedded — overlapping read paths
+        # (asyncio-concurrent on this shared store) claim before embedding
+        # so the same stale row is never paid for twice
+        self._re_embed_inflight: set[str] = set()
         try:
             from br8n.vault.migrate import export_missing
 
@@ -46,13 +50,13 @@ class VaultStore(SQLiteStore):
     async def insert_findings(self, rows: list[dict]) -> list[str]:
         ids = await super().insert_findings(rows)
         for row, fid in zip(rows, ids):
-            if row.get("embedding") is None:
-                self._conn.execute(
-                    "UPDATE findings SET needs_embed = 1 WHERE id = ?;", (fid,)
-                )
             try:
+                if row.get("embedding") is None:
+                    self._conn.execute(
+                        "UPDATE findings SET needs_embed = 1 WHERE id = ?;", (fid,)
+                    )
                 self._write_canonical(fid)
-            except Exception:  # noqa: BLE001 — vault IO is best-effort
+            except Exception:  # vault lifecycle is best-effort
                 logger.warning("vault write failed for finding %s", fid, exc_info=True)
         self._conn.commit()
         return ids
@@ -180,13 +184,23 @@ class VaultStore(SQLiteStore):
                 return
             _reconcile._apply_edit(self, path, dict(row))
             self._conn.commit()
-        except Exception:  # noqa: BLE001 — verification is best-effort
+        except Exception:  # verification is best-effort
+            try:
+                self._conn.rollback()  # never leave a write transaction open
+            except Exception:
+                pass
             logger.debug("vault verify skipped for %s", finding_id, exc_info=True)
 
     async def _re_embed_stale(self) -> int:
-        """Embed rows edits marked stale. Self-heals keyless-capture rows too."""
+        """Embed rows edits marked stale. Self-heals keyless-capture rows too.
+
+        Claim-then-embed: stale ids are claimed in ``_re_embed_inflight``
+        before the (awaited) embedding call, so an overlapping read path on
+        this store never pays to embed the same rows twice.
+        """
         if not embeddings_configured():
             return 0
+        claimed: list = []
         try:
             cap = get_config().vault.re_embed_batch
             rows = self._conn.execute(
@@ -194,8 +208,11 @@ class VaultStore(SQLiteStore):
                 "AND content IS NOT NULL AND content != '' LIMIT ?;",
                 (cap,),
             ).fetchall()
+            rows = [r for r in rows if r["id"] not in self._re_embed_inflight]
             if not rows:
                 return 0
+            self._re_embed_inflight.update(r["id"] for r in rows)
+            claimed = rows
             embeddings = await embed_batch([r["content"] for r in rows])
             for r, emb in zip(rows, embeddings):
                 self._conn.execute(
@@ -210,6 +227,12 @@ class VaultStore(SQLiteStore):
                 )
             self._conn.commit()
             return len(rows)
-        except Exception:  # noqa: BLE001 — embedding failures never break search
+        except Exception:  # embedding failures never break search
+            try:
+                self._conn.rollback()  # never leave a write transaction open
+            except Exception:
+                pass
             logger.warning("re-embed pass degraded", exc_info=True)
             return 0
+        finally:
+            self._re_embed_inflight.difference_update(r["id"] for r in claimed)
