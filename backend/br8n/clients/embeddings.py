@@ -4,13 +4,96 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import Sequence
 
 from openai import AsyncOpenAI
 
 from br8n.config import get_config, get_settings
+from br8n.settings_file import load_settings
 
 _client: AsyncOpenAI | None = None
+
+_VALID_PROVIDERS = ("auto", "remote", "local", "none")
+
+
+@dataclass(frozen=True)
+class EmbedderIdentity:
+    """Which embedding space is active, and what decided it.
+
+    ``provider`` is resolved (never ``"auto"``): ``remote`` | ``local`` |
+    ``none``. ``source`` names the precedence level that won — ``settings``
+    (the user's ~/.br8n/settings.json), ``config`` (config.yaml or
+    ``B2_EMBEDDING__PROVIDER``), or ``auto`` (credential/extra detection).
+    ``dim`` is 0 for ``none``.
+    """
+
+    provider: str
+    model: str
+    dim: int
+    source: str
+
+
+def _creds_present() -> bool:
+    s = get_settings()
+    return bool(s.ai_gateway_api_key or s.openai_api_key)
+
+
+def _local_eligible() -> bool:
+    """True when the local provider may be selected at all.
+
+    Two gates: the extra must be installed, and the tier must be local —
+    cloud pgvector columns are 1536-wide, so a 384-dim vector there is a
+    write error. Imported inside the function: ``br8n.store`` imports this
+    module, so a module-scope import would be circular.
+    """
+    try:
+        from br8n.clients import embed_local
+        from br8n.store import active_backend
+
+        return active_backend() == "local" and embed_local.installed()
+    except Exception:  # never let detection raise
+        return False
+
+
+def _requested() -> tuple[str, str]:
+    """(requested provider, source) before validation. Precedence lives here."""
+    stored = load_settings().get("embedding_provider")
+    if isinstance(stored, str) and stored in _VALID_PROVIDERS:
+        return stored, "settings"
+    configured = get_config().embedding.provider
+    if configured in _VALID_PROVIDERS and configured != "auto":
+        return configured, "config"
+    return "auto", "auto"
+
+
+def active_embedder() -> EmbedderIdentity:
+    """Resolve the active embedding identity. Never raises."""
+    cfg = get_config().embedding
+    requested, source = _requested()
+
+    if requested == "auto":
+        if _creds_present():
+            resolved = "remote"
+        elif _local_eligible():
+            resolved = "local"
+        else:
+            resolved = "none"
+    else:
+        resolved = requested
+
+    # An explicit choice that cannot be honoured degrades rather than
+    # producing vectors in the wrong space.
+    if resolved == "remote" and not _creds_present():
+        resolved = "none"
+    if resolved == "local" and not _local_eligible():
+        resolved = "none"
+
+    if resolved == "local":
+        return EmbedderIdentity("local", cfg.local_model, cfg.local_dim, source)
+    if resolved == "remote":
+        return EmbedderIdentity("remote", cfg.model, cfg.dim, source)
+    return EmbedderIdentity("none", "", 0, source)
 
 
 def embeddings_configured() -> bool:
