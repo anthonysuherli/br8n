@@ -844,13 +844,16 @@ def br8n_embeddings_set(provider: str) -> dict:
       vec tables were resized and existing rows flagged needs_embed=1 when
       the provider actually changed dim; queued_rebuild is how many rows
       were just flagged and will re-embed in the background.
-    - Deferred {ok: True, deferred: True, ...state, queued_rebuild: 0}: the
+    - Deferred {ok: True, deferred: True, ...state, queued_rebuild}: the
       request (typically "auto" after an environment change, e.g. a key
       going missing) would have discarded existing vectors, so the
       work-at-risk gate left the space exactly as it was instead of
       rebuilding — this is success, not failure, and the setting is NOT
       rolled back; `state["pending_switch"]` names the stored space, the
       detected space, and that calling this tool again is what applies it.
+      `queued_rebuild` here is the LIVE pending count (rows already flagged
+      `needs_embed=1` from before this call, e.g. earlier keyless captures)
+      and can be >0 — nothing was newly queued by this deferred call itself.
     - Failed {ok: False, error, fix}: the resync genuinely failed (e.g. a
       locked DB during the rebuild DDL) — the persisted setting is rolled
       back to its prior value; `fix` names a retry or

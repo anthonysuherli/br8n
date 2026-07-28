@@ -109,6 +109,34 @@ def active_embedder() -> EmbedderIdentity:
     return EmbedderIdentity("none", "", 0, source)
 
 
+def _pending_switch_blocks() -> bool:
+    """True when a deferred auto-detected embedding-space switch is pending
+    on the local tier (spec AC2, amended 2026-07-28).
+
+    While a switch is pending, ``active_embedder()`` already reports the NEW
+    identity but the physical vec tables are still at the OLD width — the
+    store deliberately left them alone until the user confirms via
+    ``/br8n:embeddings``. A producer that acts on the new identity anyway
+    (embeds at the new dim, inserts/queries against the old-width table)
+    hits a hard dimension-mismatch crash. This makes that window degrade to
+    ordinary keyless behavior instead.
+
+    Function-local import: ``br8n.store`` imports this module, so a
+    module-scope import would be circular (mirrors ``_local_eligible``).
+    Cheap by construction: skips the store lookup entirely off the local
+    tier, and ``pending_embedding_switch()`` itself fast-exits when no
+    stamp exists yet — at most a few small queries on a hot path. Never
+    raises — a detection failure must not block a producer either way."""
+    try:
+        from br8n.store import active_backend, get_store
+
+        if active_backend() != "local":
+            return False
+        return get_store().pending_embedding_switch() is not None
+    except Exception:
+        return False
+
+
 def embeddings_configured() -> bool:
     """True when an embedding can be produced *right now*.
 
@@ -116,8 +144,12 @@ def embeddings_configured() -> bool:
     instead of catching an auth error, so a genuine API failure stays loud.
     For the local provider this is False until the model is resident — the
     first check schedules the warm-up and the existing needs_embed drain
-    backfills, so a capture never waits on a ~130 MB download.
+    backfills, so a capture never waits on a ~130 MB download. Also False
+    while a deferred switch is pending (see ``_pending_switch_blocks``), so
+    that window degrades instead of crashing.
     """
+    if _pending_switch_blocks():
+        return False
     ident = active_embedder()
     if ident.provider == "remote":
         return True

@@ -586,40 +586,51 @@ class SQLiteStore:
         provenance, embedding`` (and an ignored ``org_id``/``kb_id``). ``tags``/
         ``provenance`` are JSON-encoded into ``findings``; ``embedding`` goes into
         ``vec_findings`` via ``serialize_float32``. ``org_id`` is forced to
-        ``"local"``; ids are generated when absent."""
+        ``"local"``; ids are generated when absent.
+
+        Rolls back on any failure (e.g. a vec insert raising a dimension
+        mismatch): without it, an earlier ``findings`` INSERT in this same
+        loop stays uncommitted on the shared connection and the NEXT
+        unrelated ``commit()`` elsewhere silently persists it — an orphan
+        row with no vault file and no ``needs_embed`` flag. The exception
+        still propagates; callers rely on that."""
         if not rows:
             return []
         ids: list[str] = []
-        for row in rows:
-            fid = row.get("id") or uuid.uuid4().hex
-            ids.append(fid)
-            self._conn.execute(
-                """
-                INSERT INTO findings
-                  (id, org_id, kb_id, title, content, category, confidence, tags, provenance, metadata, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-                """,
-                (
-                    fid,
-                    _ORG,
-                    row.get("kb_id"),
-                    row.get("title"),
-                    row.get("content"),
-                    row.get("category"),
-                    row.get("confidence"),
-                    json.dumps(list(row.get("tags") or [])),
-                    json.dumps(list(row.get("provenance") or [])),
-                    json.dumps(row["metadata"]) if row.get("metadata") is not None else None,
-                    row.get("created_at") or _now_iso(),
-                ),
-            )
-            embedding = row.get("embedding")
-            if embedding is not None:
+        try:
+            for row in rows:
+                fid = row.get("id") or uuid.uuid4().hex
+                ids.append(fid)
                 self._conn.execute(
-                    "INSERT INTO vec_findings (finding_id, embedding) VALUES (?, ?);",
-                    (fid, serialize_float32(list(embedding))),
+                    """
+                    INSERT INTO findings
+                      (id, org_id, kb_id, title, content, category, confidence, tags, provenance, metadata, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    """,
+                    (
+                        fid,
+                        _ORG,
+                        row.get("kb_id"),
+                        row.get("title"),
+                        row.get("content"),
+                        row.get("category"),
+                        row.get("confidence"),
+                        json.dumps(list(row.get("tags") or [])),
+                        json.dumps(list(row.get("provenance") or [])),
+                        json.dumps(row["metadata"]) if row.get("metadata") is not None else None,
+                        row.get("created_at") or _now_iso(),
+                    ),
                 )
-        self._conn.commit()
+                embedding = row.get("embedding")
+                if embedding is not None:
+                    self._conn.execute(
+                        "INSERT INTO vec_findings (finding_id, embedding) VALUES (?, ?);",
+                        (fid, serialize_float32(list(embedding))),
+                    )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
         return ids
 
     def get_finding(self, kb_id: str, finding_id: str) -> dict:
