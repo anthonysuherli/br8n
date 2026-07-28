@@ -15,8 +15,13 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from sqlite_vec import serialize_float32
+
+from br8n.clients.embeddings import embed_batch, embeddings_configured
+from br8n.config import get_config
 from br8n.store.sqlite import SQLiteStore, _json_load
 from br8n.vault import files, layout
+from br8n.vault import reconcile as _reconcile
 
 logger = logging.getLogger(__name__)
 
@@ -106,3 +111,83 @@ class VaultStore(SQLiteStore):
             (str(path), h, st.st_mtime, st.st_size, finding_id),
         )
         self._conn.commit()
+
+    # --- read paths: the index catches up before it answers -------------------
+
+    async def match_findings(self, kb_id, query_embedding, match_count,
+                             min_similarity, categories=None):
+        _reconcile.reconcile(self)
+        await self._re_embed_stale()
+        return await super().match_findings(
+            kb_id, query_embedding, match_count, min_similarity, categories
+        )
+
+    def list_findings(self, kb_id, category=None, limit=None):
+        _reconcile.reconcile(self)
+        return super().list_findings(kb_id, category=category, limit=limit)
+
+    def count_findings(self, kb_id):
+        _reconcile.reconcile(self)
+        return super().count_findings(kb_id)
+
+    def get_finding(self, kb_id, finding_id):
+        self._verify_one(finding_id)
+        return super().get_finding(kb_id, finding_id)
+
+    def _verify_one(self, finding_id: str) -> None:
+        """Hash-check this one file so a single read is never staler than disk.
+
+        Deletion is deliberately NOT handled here: a missing file on this one
+        row can't distinguish "genuinely deleted" from "root repointed/
+        unmounted", and only the full reconcile() pass has the walk + guards
+        (C1 root-exists, F2 magnitude) to make that call safely. A missing
+        file here just falls through to serving the indexed row as-is; the
+        next debounced reconcile() (triggered by list/count/match) or an
+        explicit reindex is what actually deletes it.
+        """
+        try:
+            row = self._conn.execute(
+                "SELECT id, vault_path, content_hash, vault_mtime, vault_size "
+                "FROM findings WHERE id = ? AND vault_path IS NOT NULL LIMIT 1;",
+                (finding_id,),
+            ).fetchone()
+            if row is None:
+                return
+            path = Path(row["vault_path"])
+            if not path.exists():
+                return
+            _reconcile._apply_edit(self, path, dict(row))
+            self._conn.commit()
+        except Exception:  # noqa: BLE001 — verification is best-effort
+            logger.debug("vault verify skipped for %s", finding_id, exc_info=True)
+
+    async def _re_embed_stale(self) -> int:
+        """Embed rows edits marked stale. Self-heals keyless-capture rows too."""
+        if not embeddings_configured():
+            return 0
+        try:
+            cap = get_config().vault.re_embed_batch
+            rows = self._conn.execute(
+                "SELECT id, content FROM findings WHERE needs_embed = 1 "
+                "AND content IS NOT NULL AND content != '' LIMIT ?;",
+                (cap,),
+            ).fetchall()
+            if not rows:
+                return 0
+            embeddings = await embed_batch([r["content"] for r in rows])
+            for r, emb in zip(rows, embeddings):
+                self._conn.execute(
+                    "DELETE FROM vec_findings WHERE finding_id = ?;", (r["id"],)
+                )
+                self._conn.execute(
+                    "INSERT INTO vec_findings (finding_id, embedding) VALUES (?, ?);",
+                    (r["id"], serialize_float32(list(emb))),
+                )
+                self._conn.execute(
+                    "UPDATE findings SET needs_embed = 0 WHERE id = ?;", (r["id"],)
+                )
+            self._conn.commit()
+            return len(rows)
+        except Exception:  # noqa: BLE001 — embedding failures never break search
+            logger.warning("re-embed pass degraded", exc_info=True)
+            return 0

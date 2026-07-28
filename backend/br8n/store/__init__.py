@@ -1,7 +1,8 @@
 """Store: the engine's persistence seam + backend selection.
 
-`Store` is the protocol; `SupabaseStore` (cloud) and `SQLiteStore` (free/local)
-are the two implementations. `get_store()` is the factory the engine calls.
+`Store` is the protocol; `SupabaseStore` (cloud) and `VaultStore` (markdown-
+canonical vault + SQLite index, free/local) are the two implementations.
+`get_store()` is the factory the engine calls.
 
 Backend selection (in order):
   1. ``BR8N_BACKEND`` env var — ``"local"`` or ``"cloud"`` (explicit override);
@@ -23,11 +24,14 @@ from br8n.config import get_settings
 from br8n.store.base import Store
 from br8n.store.sqlite import SQLiteStore, _default_db_path
 from br8n.store.supabase import SupabaseStore
+from br8n.store.vault import VaultStore
 
-__all__ = ["Store", "SupabaseStore", "SQLiteStore", "get_store", "active_backend"]
+__all__ = [
+    "Store", "SupabaseStore", "SQLiteStore", "VaultStore", "get_store", "active_backend",
+]
 
 # Local stores cached by db_path so the SQLite connection is reused.
-_local_stores: dict[str, SQLiteStore] = {}
+_local_stores: dict[str, VaultStore] = {}
 
 
 def _has_cloud_creds() -> bool:
@@ -57,7 +61,7 @@ def active_backend() -> str:
 def get_store(access_token: str | None = None, *, org_id: str | None = None) -> Store:
     """Return the active Store for this request.
 
-    Local: a cached SQLiteStore (connection reused). Cloud: a fresh
+    Local: a cached VaultStore (connection reused). Cloud: a fresh
     SupabaseStore bound to ``access_token`` for RLS-scoped finding ops and an
     optional ``org_id`` (sourced from the verified request JWT) that skips the
     store's internal MCP-path login.
@@ -66,7 +70,7 @@ def get_store(access_token: str | None = None, *, org_id: str | None = None) -> 
         path = _default_db_path()
         store = _local_stores.get(path)
         if store is None:
-            store = SQLiteStore(path)
+            store = VaultStore(path)
             _local_stores[path] = store
         return store
     return SupabaseStore(access_token, org_id=org_id)
