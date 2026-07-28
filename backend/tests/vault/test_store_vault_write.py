@@ -57,6 +57,26 @@ async def test_insert_writes_canonical_file(store):
 
 
 @pytest.mark.asyncio
+async def test_insert_with_embedding_does_not_mark_needs_embed(store):
+    """A row inserted WITH an embedding keeps its vec row and never enters
+    the re-embed queue."""
+    kb_id = _mk_kb(store)
+    [fid] = await store.insert_findings(
+        [{"kb_id": kb_id, "title": "Embedded", "content": "c", "category": "note",
+          "confidence": 1.0, "tags": [], "provenance": [],
+          "embedding": [0.1] * 1536}]
+    )
+    r = store._conn.execute(
+        "SELECT needs_embed FROM findings WHERE id = ?;", (fid,)
+    ).fetchone()
+    assert not r["needs_embed"]  # 0 or NULL — not queued for re-embedding
+    n = store._conn.execute(
+        "SELECT COUNT(*) AS n FROM vec_findings WHERE finding_id = ?;", (fid,)
+    ).fetchone()["n"]
+    assert n == 1  # the provided embedding landed
+
+
+@pytest.mark.asyncio
 async def test_journal_goes_to_year_dir(store):
     from br8n.constants import JOURNAL_SCOPE
 

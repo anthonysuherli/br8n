@@ -86,3 +86,76 @@ async def test_persist_journal_returns_vault_path(env, monkeypatch):
     assert Path(out["entry_path"]).exists()
     # the legacy global journal dir gets no new file
     assert not (tmp_path / "journal").exists()
+
+
+@pytest.mark.asyncio
+async def test_persist_note_falls_back_to_empty_path(env, monkeypatch):
+    """If the vault write degraded (no vault_path stamped), note_path is ''
+    rather than None or a crash."""
+    tmp_path = env
+    monkeypatch.setattr("br8n.livingdocs.notes.embed_batch", _fake_embed_batch)
+    monkeypatch.setattr("br8n.livingdocs.notes.schedule_rebuild", lambda ctx: None)
+
+    from br8n.interfaces.mcp.tenancy import resolve_tenant
+    from br8n.livingdocs.notes import persist_note
+    from br8n.store.vault import VaultStore
+
+    monkeypatch.setattr(VaultStore, "vault_path_for", lambda self, fid: None)
+    ctx = resolve_tenant("br8n", "main", create=True)
+    out = await persist_note(
+        ctx, project_path=str(tmp_path / "repo"), kb="main",
+        content="body", session_id="s1", title="Note",
+    )
+    assert out["finding_id"]
+    assert out["note_path"] == ""
+
+
+class _FakeCloudStore:
+    """Cloud stand-in: insert succeeds, no vault involved."""
+
+    async def insert_findings(self, rows):
+        return [f"cloud-{i}" for i, _ in enumerate(rows)]
+
+
+@pytest.mark.asyncio
+async def test_persist_note_cloud_writes_legacy_tree(env, monkeypatch):
+    tmp_path = env
+    monkeypatch.setattr("br8n.livingdocs.notes.embed_batch", _fake_embed_batch)
+    monkeypatch.setattr("br8n.livingdocs.notes.schedule_rebuild", lambda ctx: None)
+    monkeypatch.setattr("br8n.livingdocs.notes.active_backend", lambda: "cloud")
+    monkeypatch.setattr("br8n.livingdocs.notes.get_store", lambda tok=None: _FakeCloudStore())
+
+    from br8n.interfaces.mcp.tenancy import resolve_tenant
+    from br8n.livingdocs.notes import persist_note
+
+    ctx = resolve_tenant("br8n", "main", create=True)
+    out = await persist_note(
+        ctx, project_path=str(tmp_path / "repo"), kb="main",
+        content="cloud note", session_id="s1", title="Cloud note",
+    )
+    assert out["note_path"].startswith(str(tmp_path / "repo"))
+    p = Path(out["note_path"])
+    assert p.exists()
+    assert "cloud note" in p.read_text()
+    # nothing landed in the vault tree for a cloud write
+    assert not list((tmp_path / "vault").rglob("*cloud-note*"))
+
+
+@pytest.mark.asyncio
+async def test_persist_journal_cloud_writes_legacy_dir(env, monkeypatch):
+    tmp_path = env
+    monkeypatch.setattr("br8n.livingdocs.journal.embed_batch", _fake_embed_batch)
+    monkeypatch.setattr("br8n.livingdocs.journal.active_backend", lambda: "cloud")
+    monkeypatch.setattr("br8n.livingdocs.journal.get_store", lambda tok=None: _FakeCloudStore())
+
+    from br8n.constants import JOURNAL_SCOPE
+    from br8n.interfaces.mcp.tenancy import resolve_tenant
+    from br8n.livingdocs.journal import persist_journal
+
+    ctx = resolve_tenant(JOURNAL_SCOPE, JOURNAL_SCOPE, create=True)
+    out = await persist_journal(ctx, text="cloud journal entry", type="insight")
+
+    assert str(tmp_path / "journal") in out["entry_path"]
+    p = Path(out["entry_path"])
+    assert p.exists()
+    assert "cloud journal entry" in p.read_text()
