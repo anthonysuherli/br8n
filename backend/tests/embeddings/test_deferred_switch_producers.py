@@ -221,3 +221,90 @@ async def test_insert_findings_rolls_back_on_vec_insert_failure(tmp_path, monkey
     n = store._conn.execute("SELECT COUNT(*) AS n FROM findings;").fetchone()["n"]
     assert n == 1, "the failed insert left an orphan findings row"
     store.close()
+
+
+@pytest.mark.asyncio
+async def test_upsert_kg_nodes_rolls_back_on_vec_insert_failure(tmp_path, monkeypatch):
+    """The same orphan-row leak as above, one method over. The activity-graph
+    populate is fire-and-forget, so its caller swallows this failure and the
+    partial batch rode the next unrelated commit into the graph."""
+    monkeypatch.setenv("BR8N_BACKEND", "local")
+    from br8n.store.sqlite import SQLiteStore
+
+    store = SQLiteStore(str(tmp_path / "brain.db"))
+    assert store._declared_vec_dim() == 1536
+
+    with pytest.raises(Exception):
+        await store.upsert_kg_nodes("kb-1", [
+            {"type": "repo", "label": "br8n"},  # row lands first...
+            {"type": "task", "label": "t", "embedding": [0.1] * 10},  # ...then this raises
+        ])
+
+    store._conn.execute(
+        "INSERT INTO findings (id, org_id, kb_id, title, content, category, "
+        "confidence, tags, provenance, metadata, created_at) VALUES "
+        "('other', 'local', 'kb-1', 'x', 'y', 'note', 1.0, '[]', '[]', NULL, 'now');"
+    )
+    store._conn.commit()
+
+    n = store._conn.execute("SELECT COUNT(*) AS n FROM kg_nodes;").fetchone()["n"]
+    assert n == 0, "the failed upsert left an orphan kg_nodes row"
+    store.close()
+
+
+# --- 4. the living-docs producers must degrade in the window too --------------
+
+
+@pytest.mark.asyncio
+async def test_note_persists_during_a_pending_switch(local_env, fake_fastembed, monkeypatch):
+    embed_local.load_now()
+    await _stamp_pending_switch(monkeypatch, "kb-1", "old remote note")
+
+    from br8n.livingdocs.notes import persist_note
+
+    res = await persist_note(
+        _ctx(), project_path="/code/br8n", kb="main", content="a note body",
+        session_id="s1", title="a note",
+    )
+
+    assert res["finding_id"]
+    store = get_store("")
+    row = store._conn.execute(
+        "SELECT needs_embed FROM findings WHERE id = ?;", (res["finding_id"],)
+    ).fetchone()
+    assert row["needs_embed"] == 1, "deferred-window note must flag needs_embed, not embed at 384"
+
+
+@pytest.mark.asyncio
+async def test_journal_persists_during_a_pending_switch(local_env, fake_fastembed, monkeypatch):
+    embed_local.load_now()
+    await _stamp_pending_switch(monkeypatch, "kb-1", "old remote note")
+
+    from br8n.livingdocs.journal import persist_journal
+
+    res = await persist_journal(_ctx(), text="a journal entry")
+
+    assert res["finding_id"]
+    store = get_store("")
+    row = store._conn.execute(
+        "SELECT needs_embed FROM findings WHERE id = ?;", (res["finding_id"],)
+    ).fetchone()
+    assert row["needs_embed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_journal_search_degrades_during_a_pending_switch(
+    local_env, fake_fastembed, monkeypatch
+):
+    embed_local.load_now()
+    await _stamp_pending_switch(monkeypatch, "kb-1", "old remote note")
+
+    from br8n.interfaces.mcp.server import _journal_impl, _journal_search_impl
+
+    await _journal_impl("a journal entry about the release")
+    res = await _journal_search_impl("release", scope="journal")
+
+    assert res["count"] == 1, "degraded search returned nothing"
+    assert res["results"][0]["title"]
+    assert "score" not in res["results"][0], "recency rows must not claim a relevance score"
+    assert "embeddings unavailable" in res["degraded"]

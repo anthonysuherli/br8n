@@ -242,10 +242,66 @@ async def br8n_journal(
     return await _journal_impl(text, type, tags, title, project, project_path, session_id)
 
 
+def _journal_recent_fallback(scope, type, limit, project, kb) -> dict:
+    """Recency-ordered stand-in when no embedder is usable — mirrors the
+    resume card's ``_recent_bands`` (br8n/agent/preamble.py).
+
+    Reached on a keyless install and during a deferred embedding-space switch,
+    where embedding the query at the NEW dim raises a sqlite-vec mismatch
+    against the still-OLD-width table. Rows carry no ``score`` (they are not
+    relevance-ranked) and the response is stamped ``degraded`` so the caller
+    says so instead of reporting a confident miss.
+
+    Scope selects the same corpus the semantic branch below would have — the
+    degrade changes the ORDERING (recency, not relevance), never which KBs or
+    categories are in view.
+    """
+    if scope == "journal":
+        ctx = resolve_tenant(JOURNAL_SCOPE, JOURNAL_SCOPE, create=True)
+        store = get_store(ctx.access_token, org_id=ctx.org_id)
+        kb_id, categories = ctx.kb_id, ["journal"]
+    elif scope == "project":
+        try:
+            ctx = resolve_tenant(project, kb, create=False)
+        except RuntimeError as exc:  # unknown project/kb — a miss, not an error
+            if "not found" in str(exc).lower():
+                return {"results": [], "scope": scope, "count": 0}
+            raise
+        store = get_store(ctx.access_token, org_id=ctx.org_id)
+        kb_id, categories = ctx.kb_id, ["note"]
+    else:  # "both" — org-wide across the journal + every KB's notes
+        store = resolve_store()
+        kb_id, categories = None, ["journal", "note"]
+    rows = (store.list_findings(kb_id, category=categories, limit=limit) or {}).get(
+        "findings"
+    ) or []
+    results = [
+        {
+            "id": r.get("id"),
+            "title": r.get("title"),
+            "snippet": "",  # list_findings is a listing projection — no content
+            "category": r.get("category"),
+            "tags": r.get("tags") or [],
+        }
+        for r in rows
+        if not type or type in (r.get("tags") or [])
+    ]
+    return {
+        "results": results,
+        "scope": scope,
+        "count": len(results),
+        "degraded": "embeddings unavailable — newest entries, not relevance-ranked; "
+                    "run /br8n:embeddings to see why",
+    }
+
+
 async def _journal_search_impl(
     query, scope="both", type=None, limit=10, project="", kb="", project_path=""
 ):
-    from br8n.clients.embeddings import embed_text
+    from br8n.clients.embeddings import embed_text, embeddings_configured
+
+    if not embeddings_configured():
+        return _journal_recent_fallback(scope, type, limit, project, kb)
 
     emb = await embed_text(query)
     min_sim = 0.0

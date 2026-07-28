@@ -12,15 +12,18 @@ this dual-writes: the Finding plus a markdown file in the GLOBAL
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 
 from br8n.agent.state import TenantContext
-from br8n.clients.embeddings import embed_batch
+from br8n.clients.embeddings import embed_batch, embeddings_configured
 from br8n.constants import JOURNAL_SCOPE  # noqa: F401 — re-exported for callers
 from br8n.store import active_backend, get_store
+
+logger = logging.getLogger(__name__)
 
 
 def _slug(text: str) -> str:
@@ -100,7 +103,15 @@ async def persist_journal(
         "tags": all_tags,
         "provenance": [prov],
     }
-    [embedding] = await embed_batch([text])
+    # See the matching comment in `br8n/livingdocs/notes.py`: an entry must
+    # persist unembedded rather than be lost when no embedder is usable —
+    # including during a deferred embedding-space switch, where embedding at
+    # the new dim raises a dimension mismatch against the old-width table.
+    embedding = None
+    if embeddings_configured():
+        [embedding] = await embed_batch([text])
+    else:
+        logger.info("embeddings unavailable; storing journal entry without an embedding")
     row["embedding"] = embedding
     store = get_store(ctx.access_token)
     [finding_id] = await store.insert_findings([row])

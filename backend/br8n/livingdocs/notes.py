@@ -9,14 +9,17 @@ On the cloud tier, this dual-writes: the Finding plus a markdown file under
 """
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timezone
 
 from br8n.agent.state import TenantContext
 from br8n.agent.synopsis import schedule_rebuild
-from br8n.clients.embeddings import embed_batch
+from br8n.clients.embeddings import embed_batch, embeddings_configured
 from br8n.livingdocs.paths import DocPaths, ensure_layout
 from br8n.store import active_backend, get_store
+
+logger = logging.getLogger(__name__)
 
 
 def _slug(text: str) -> str:
@@ -75,7 +78,17 @@ async def persist_note(
         ],
         "metadata": {"next_action": next_action} if next_action else None,
     }
-    [embedding] = await embed_batch([content])
+    # Same contract as capture (`br8n/capture/service.py`): a note must persist
+    # on a bare install and during a deferred embedding-space switch, where
+    # `active_embedder()` already reports the NEW identity but the vec tables
+    # are still the OLD width. Embedding anyway raised a sqlite-vec dimension
+    # mismatch and lost the note outright. Unembedded, it is flagged
+    # `needs_embed=1` and the existing drain backfills it.
+    embedding = None
+    if embeddings_configured():
+        [embedding] = await embed_batch([content])
+    else:
+        logger.info("embeddings unavailable; storing note without an embedding")
     row["embedding"] = embedding
     store = get_store(ctx.access_token)
     [finding_id] = await store.insert_findings([row])

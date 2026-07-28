@@ -124,18 +124,28 @@ class SupabaseStore:
         return row[0]
 
     def list_findings(
-        self, kb_id: str, category: str | None = None, limit: int | None = None
+        self,
+        kb_id: str | None,
+        category: str | list[str] | None = None,
+        limit: int | None = None,
     ) -> dict:
-        """Mirrors findings/service.py list_findings."""
+        """Mirrors findings/service.py list_findings.
+
+        ``kb_id=None`` lists org-wide and ``category`` accepts a list, matching
+        ``match_findings``. Org-wide goes through the explicit ``org_id``
+        filter, never RLS alone — the tenancy invariant this module documents.
+        """
         n = min(limit or LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT)
-        q = (
-            self._user()
-            .table("findings")
-            .select(_FINDING_LIST_COLS)
-            .eq("kb_id", kb_id)
-        )
-        if category:
-            q = q.eq("category", category)
+        q = self._user().table("findings").select(_FINDING_LIST_COLS)
+        if kb_id is not None:
+            q = q.eq("kb_id", kb_id)
+        else:
+            q = q.eq("org_id", self._resolve_org())
+        cats = [category] if isinstance(category, str) else list(category or [])
+        if len(cats) == 1:
+            q = q.eq("category", cats[0])
+        elif cats:
+            q = q.in_("category", cats)
         rows = q.order("created_at", desc=True).limit(n).execute().data or []
         return {"count": len(rows), "findings": rows}
 

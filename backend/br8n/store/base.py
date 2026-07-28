@@ -48,9 +48,16 @@ class Store(Protocol):
         ...
 
     def list_findings(
-        self, kb_id: str, category: str | None = None, limit: int | None = None
+        self,
+        kb_id: str | None,
+        category: str | list[str] | None = None,
+        limit: int | None = None,
     ) -> dict:
-        """Most-recent findings in `kb_id`. Returns {"count", "findings"}."""
+        """Most-recent findings in `kb_id`. Returns {"count", "findings"}.
+
+        ``kb_id=None`` lists org-wide; ``category`` accepts one or several —
+        mirroring ``match_findings``, so a recency read can span the same
+        corpus as a semantic one."""
         ...
 
     def delete_finding(self, kb_id: str, finding_id: str) -> dict:

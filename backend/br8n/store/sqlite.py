@@ -655,21 +655,32 @@ class SQLiteStore:
         }
 
     def list_findings(
-        self, kb_id: str, category: str | None = None, limit: int | None = None
+        self,
+        kb_id: str | None,
+        category: str | list[str] | None = None,
+        limit: int | None = None,
     ) -> dict:
         """Most-recent findings in `kb_id`. Returns {"count", "findings"}.
 
         List view omits ``content``/``provenance`` (matching SupabaseStore);
-        optional category filter; default/max limits mirror findings/service."""
+        default/max limits mirror findings/service. ``kb_id=None`` lists across
+        every KB in the local org and ``category`` accepts a list — the same
+        two widenings ``match_findings`` already has, so the recency fallback
+        used when no embedder is available can cover the same corpus a
+        semantic search would have."""
         n = min(limit or LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT)
-        sql = (
-            f"SELECT {', '.join(_FINDING_LIST_COLS)} "
-            "FROM findings WHERE kb_id = ?"
-        )
-        params: list[object] = [kb_id]
-        if category:
-            sql += " AND category = ?"
-            params.append(category)
+        sql = f"SELECT {', '.join(_FINDING_LIST_COLS)} FROM findings WHERE "
+        params: list[object] = []
+        if kb_id is not None:
+            sql += "kb_id = ?"
+            params.append(kb_id)
+        else:
+            sql += "org_id = ?"
+            params.append(_ORG)
+        cats = [category] if isinstance(category, str) else list(category or [])
+        if cats:
+            sql += f" AND category IN ({','.join('?' for _ in cats)})"
+            params.extend(cats)
         sql += " ORDER BY created_at DESC LIMIT ?;"
         params.append(n)
         rows = self._conn.execute(sql, params).fetchall()
@@ -889,49 +900,63 @@ class SQLiteStore:
         reuses the existing node, merging ``properties`` (existing wins, so a
         node's identity is stable) and unioning ``grounded_in`` (capped to the
         most recent ``_MAX_GROUNDED``). Embeddings, when present, are written to
-        ``vec_kg_nodes`` for semantic seeding."""
+        ``vec_kg_nodes`` for semantic seeding.
+
+        Rolls back on any failure, for the same reason ``insert_findings``
+        does: the population that calls this is fire-and-forget, so a raising
+        vec insert (a dimension mismatch during a deferred embedding-space
+        switch) is swallowed upstream — leaving the ``kg_nodes`` rows written
+        so far uncommitted on the shared connection for the NEXT unrelated
+        ``commit()`` to persist. That silently lands a fragment of the batch
+        (nodes with no vector and no ``needs_embed`` flag, and none of the
+        edges, which are resolved after this returns). The exception still
+        propagates."""
         if not nodes:
             return []
         ids: list[str] = []
         batch: dict[tuple[str, str], str] = {}
-        for nd in nodes:
-            typ = nd.get("type") or ""
-            label = nd.get("label") or ""
-            props = dict(nd.get("properties") or {})
-            grounded = list(nd.get("grounded_in") or [])
-            key = (typ, label)
-            if key in batch:
-                nid = batch[key]
-                self._merge_kg_node(nid, props, grounded)
-                ids.append(nid)
-                continue
-            existing = self._conn.execute(
-                "SELECT id FROM kg_nodes WHERE kb_id = ? AND type = ? AND label = ? LIMIT 1;",
-                (kb_id, typ, label),
-            ).fetchone()
-            if existing is not None:
-                nid = existing["id"]
-                self._merge_kg_node(nid, props, grounded)
-            else:
-                nid = uuid.uuid4().hex
-                self._conn.execute(
-                    """
-                    INSERT INTO kg_nodes
-                      (id, org_id, kb_id, type, label, properties, grounded_in, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?);
-                    """,
-                    (nid, _ORG, kb_id, typ, label, json.dumps(props),
-                     json.dumps(grounded[-_MAX_GROUNDED:]), _now_iso()),
-                )
-                embedding = nd.get("embedding")
-                if embedding is not None:
+        try:
+            for nd in nodes:
+                typ = nd.get("type") or ""
+                label = nd.get("label") or ""
+                props = dict(nd.get("properties") or {})
+                grounded = list(nd.get("grounded_in") or [])
+                key = (typ, label)
+                if key in batch:
+                    nid = batch[key]
+                    self._merge_kg_node(nid, props, grounded)
+                    ids.append(nid)
+                    continue
+                existing = self._conn.execute(
+                    "SELECT id FROM kg_nodes WHERE kb_id = ? AND type = ? AND label = ? LIMIT 1;",
+                    (kb_id, typ, label),
+                ).fetchone()
+                if existing is not None:
+                    nid = existing["id"]
+                    self._merge_kg_node(nid, props, grounded)
+                else:
+                    nid = uuid.uuid4().hex
                     self._conn.execute(
-                        "INSERT INTO vec_kg_nodes (node_id, embedding) VALUES (?, ?);",
-                        (nid, serialize_float32(list(embedding))),
+                        """
+                        INSERT INTO kg_nodes
+                          (id, org_id, kb_id, type, label, properties, grounded_in, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                        """,
+                        (nid, _ORG, kb_id, typ, label, json.dumps(props),
+                         json.dumps(grounded[-_MAX_GROUNDED:]), _now_iso()),
                     )
-            batch[key] = nid
-            ids.append(nid)
-        self._conn.commit()
+                    embedding = nd.get("embedding")
+                    if embedding is not None:
+                        self._conn.execute(
+                            "INSERT INTO vec_kg_nodes (node_id, embedding) VALUES (?, ?);",
+                            (nid, serialize_float32(list(embedding))),
+                        )
+                batch[key] = nid
+                ids.append(nid)
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
         return ids
 
     def _merge_kg_node(self, node_id: str, props: dict, grounded: list[str]) -> None:
