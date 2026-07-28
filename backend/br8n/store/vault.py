@@ -20,7 +20,7 @@ from sqlite_vec import serialize_float32
 from br8n.clients.embeddings import embed_batch, embeddings_configured
 from br8n.config import get_config
 from br8n.store.sqlite import SQLiteStore, _json_load
-from br8n.vault import files, layout
+from br8n.vault import files, layout, views as _views
 from br8n.vault import reconcile as _reconcile
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,15 @@ class VaultStore(SQLiteStore):
             except Exception:  # noqa: BLE001 — vault IO is best-effort
                 logger.warning("vault unlink failed for %s", path, exc_info=True)
         return result
+
+    def upsert_synopsis(self, kb_id, content, finding_count, model):
+        super().upsert_synopsis(kb_id, content, finding_count, model)
+        _views.write_synopsis_view(self, kb_id, content)
+
+    async def upsert_kg_nodes(self, kb_id, nodes):
+        ids = await super().upsert_kg_nodes(kb_id, nodes)
+        _views.write_activity_view(self, kb_id)
+        return ids
 
     # --- helpers ----------------------------------------------------------------
 

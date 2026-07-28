@@ -32,7 +32,8 @@ from br8n.livingdocs.state import (
     save_timeline_state,
     should_roll,
 )
-from br8n.store import get_store
+from br8n.store import active_backend, get_store
+from br8n.vault import views
 
 logger = logging.getLogger(__name__)
 
@@ -312,12 +313,12 @@ async def run_timeline(
         week = _window_events(window_all, cfg.week_days, now)
         headers = await _infer_day_headers(week)  # one call covers both windows
         paths.timeline_dir.mkdir(parents=True, exist_ok=True)
-        (paths.timeline_dir / "recent.md").write_text(
-            render_window("recent", recent, day_headers=headers)
-        )
-        (paths.timeline_dir / "week.md").write_text(
-            render_window("week", week, day_headers=headers)
-        )
+        recent_text = render_window("recent", recent, day_headers=headers)
+        week_text = render_window("week", week, day_headers=headers)
+        (paths.timeline_dir / "recent.md").write_text(recent_text)
+        (paths.timeline_dir / "week.md").write_text(week_text)
+        if active_backend() == "local":
+            views.mirror_timeline(project, kb, recent_text, week_text)
 
         # 3) advance state
         if new_events:
