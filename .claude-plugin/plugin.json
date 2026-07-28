@@ -26,7 +26,8 @@
     "./skills/notes",
     "./skills/docs",
     "./skills/journal",
-    "./skills/timeline"
+    "./skills/timeline",
+    "./skills/embeddings"
   ],
   "hooks": "./hooks/hooks.json"
 }

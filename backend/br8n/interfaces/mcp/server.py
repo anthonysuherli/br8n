@@ -651,6 +651,109 @@ async def br8n_kg_stats(project: str, kb: str) -> dict:
     return store.kg_stats(ctx.kb_id)
 
 
+_VALID_EMBED_PROVIDERS = ("auto", "remote", "local", "none")
+
+
+def _pending_counts() -> tuple[int, int]:
+    """(findings, nodes) awaiting embedding. Local tier only; 0/0 elsewhere."""
+    from br8n.store import active_backend, get_store
+
+    if active_backend() != "local":
+        return 0, 0
+    try:
+        conn = get_store()._conn
+        f = conn.execute(
+            "SELECT COUNT(*) AS n FROM findings WHERE needs_embed = 1;"
+        ).fetchone()["n"]
+        n = conn.execute(
+            "SELECT COUNT(*) AS n FROM kg_nodes WHERE needs_embed = 1;"
+        ).fetchone()["n"]
+        return int(f), int(n)
+    except Exception:  # reporting must not raise
+        return 0, 0
+
+
+def _embeddings_get_impl() -> dict:
+    from br8n.clients import embed_local
+    from br8n.clients.embeddings import active_embedder
+
+    ident = active_embedder()
+    pending_findings, pending_nodes = _pending_counts()
+    return {
+        "provider": ident.provider,
+        "model": ident.model,
+        "dim": ident.dim,
+        "source": ident.source,
+        "extra_installed": embed_local.installed(),
+        # "cached" and "resident" collapse to the same observable: the only
+        # honest cache check is attempting a cache-only load, which warm_up()
+        # does off-thread.
+        "model_cached": embed_local.ready(),
+        "ready": embed_local.ready(),
+        "pending_findings": pending_findings,
+        "pending_nodes": pending_nodes,
+    }
+
+
+def _embeddings_set_impl(provider: str) -> dict:
+    from br8n.clients import embed_local
+    from br8n.settings_file import save_setting
+    from br8n.store import active_backend
+
+    if provider not in _VALID_EMBED_PROVIDERS:
+        return {
+            "ok": False,
+            "error": f"unknown provider {provider!r}; expected one of "
+                     f"{', '.join(_VALID_EMBED_PROVIDERS)}",
+            "fix": None,
+        }
+    if provider == "local":
+        if active_backend() != "local":
+            return {
+                "ok": False,
+                "error": "local embeddings are local-tier only — cloud pgvector "
+                         "columns are 1536-wide; keep a remote key on cloud",
+                "fix": None,
+            }
+        if not embed_local.installed():
+            return {
+                "ok": False,
+                "error": "the local-embeddings extra is not installed",
+                "fix": "pip install 'br8n[local-embeddings]'",
+            }
+
+    save_setting("embedding_provider", provider)
+    state = _embeddings_get_impl()
+    if state["provider"] == "local":
+        embed_local.warm_up()
+    return {
+        "ok": True,
+        **state,
+        "queued_rebuild": state["pending_findings"] + state["pending_nodes"],
+    }
+
+
+@mcp.tool()
+def br8n_embeddings_get() -> dict:
+    """Report the active embedding provider: {provider, model, dim, source,
+    extra_installed, model_cached, ready, pending_findings, pending_nodes}.
+    `source` names what decided it — "settings" (~/.br8n/settings.json),
+    "config" (config.yaml / B2_EMBEDDING__PROVIDER) or "auto" (detection).
+    Used by /br8n:embeddings."""
+    return _embeddings_get_impl()
+
+
+@mcp.tool()
+def br8n_embeddings_set(provider: str) -> dict:
+    """Set the embedding provider — "auto" | "remote" | "local" | "none" —
+    persisting to ~/.br8n/settings.json so it applies without restarting the
+    MCP server. Refuses "local" when the extra is missing (returns the pip
+    command in `fix`) or on the cloud tier. On success returns {ok: True,
+    ...state, queued_rebuild} where queued_rebuild is how many rows will
+    re-embed in the background. Used by /br8n:embeddings."""
+    return _embeddings_set_impl(provider)
+
+
 def main() -> None:
     get_settings()
     mcp.run()
