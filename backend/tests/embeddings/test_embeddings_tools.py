@@ -30,6 +30,43 @@ def test_get_reports_identity_and_source(monkeypatch):
     assert out["pending_findings"] == 0
     assert out["pending_nodes"] == 0
     assert "extra_installed" in out and "ready" in out
+    assert out["pending_switch"] is None  # existing keys unchanged, new key added
+
+
+async def test_get_reports_pending_switch_when_a_change_is_deferred(monkeypatch):
+    """Change B surfacing: when an auto-detected environment change would
+    discard existing vectors, _sync_embedding_space defers it rather than
+    rebuilding — br8n_embeddings_get must still report that a switch is
+    available (stored space, detected space) so /br8n:embeddings can apply
+    it, without mutating anything itself."""
+    monkeypatch.setattr("br8n.clients.embeddings._creds_present", lambda: True)
+
+    from br8n.store import get_store
+
+    store = get_store()
+    org_id, pid = store.resolve_project("p", create=True)
+    kb_id = store.resolve_kb(org_id, pid, "k", create=True)
+    await store.insert_findings(
+        [{"kb_id": kb_id, "title": "t", "content": "c", "category": "note",
+          "confidence": 1.0, "tags": [], "provenance": [],
+          "embedding": [0.1] * 1536}]
+    )
+    assert store.embedding_space()["dim"] == 1536
+
+    # Simulate the key silently going missing (no br8n_embeddings_set call) —
+    # this alone must never rebuild anything.
+    monkeypatch.setattr("br8n.clients.embeddings._creds_present", lambda: False)
+    monkeypatch.setattr("br8n.clients.embed_local.installed", lambda: True)
+
+    out = server._embeddings_get_impl()
+    assert out["provider"] == "local"
+    assert out["source"] == "auto"
+    assert out["pending_switch"] == {
+        "stored": {"provider": "remote", "model": "text-embedding-3-small", "dim": 1536},
+        "detected": {"provider": "local", "model": "BAAI/bge-small-en-v1.5", "dim": 384},
+    }
+    # Reporting must not have touched the live store.
+    assert store.embedding_space()["dim"] == 1536
 
 
 def test_set_rejects_unknown_provider():

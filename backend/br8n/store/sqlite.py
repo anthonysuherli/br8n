@@ -255,6 +255,81 @@ class SQLiteStore:
         )
         self._conn.commit()
 
+    def _vector_row_count(self) -> int:
+        """Rows currently held by vec_findings + vec_kg_nodes. 0 on any error.
+
+        Physical reality, not a row count of ``findings``/``kg_nodes`` — a
+        keyless machine can have many findings with content and zero
+        embedded vectors (``needs_embed=1``, never embedded), and that case
+        must still rebuild freely (Change B / AC1)."""
+        try:
+            n_f = self._conn.execute(
+                "SELECT COUNT(*) AS n FROM vec_findings;"
+            ).fetchone()["n"]
+            n_k = self._conn.execute(
+                "SELECT COUNT(*) AS n FROM vec_kg_nodes;"
+            ).fetchone()["n"]
+            return int(n_f) + int(n_k)
+        except Exception:
+            return 0
+
+    def _has_vectors(self) -> bool:
+        """True when a rebuild right now would actually discard something."""
+        return self._vector_row_count() > 0
+
+    def _space_mismatch(self, stored: dict | None, ident) -> bool:
+        """Read-only: does `stored` disagree with `ident`, either directly or
+        via the vec tables' CURRENT physical width?
+
+        Checking physical width in addition to the stamp is what closes the
+        wedge: if ``_rebuild_vec_tables`` commits (tables now at the new
+        width) but ``_stamp_embedding_space`` then fails, the stamp is left
+        pointing at the OLD identity while the tables are already at the
+        NEW one. If the caller then reverts to the old provider, the active
+        identity matches the STALE stamp exactly, so a stamp-only
+        comparison would never re-fire — every insert would fail forever.
+        Comparing physical width too makes every partially-applied state
+        self-healing on the next sync (see ``_sync_embedding_space``)."""
+        physical_dim = self._declared_vec_dim()
+        if stored is None:
+            return physical_dim is not None and physical_dim != ident.dim
+        if stored["dim"] != ident.dim or stored["model"] != ident.model:
+            return True
+        return physical_dim is not None and physical_dim != ident.dim
+
+    def pending_embedding_switch(self) -> dict | None:
+        """A deferred auto-detected space change, or None if nothing is
+        pending. Read-only — mirrors the work-at-risk gate in
+        ``_sync_embedding_space`` without mutating anything, so
+        ``br8n_embeddings_get``/``--check`` can surface "a switch is
+        available, run /br8n:embeddings to apply it" with no new persisted
+        state (spec AC2, amended 2026-07-28). Only an AUTO-detected mismatch
+        that would discard existing vectors is ever "pending" — an explicit
+        choice (settings/config) always applies immediately in
+        ``_sync_embedding_space``, so it never lingers here."""
+        try:
+            from br8n.clients.embeddings import active_embedder
+
+            ident = active_embedder()
+            if ident.provider == "none" or ident.dim <= 0 or ident.source != "auto":
+                return None
+            stored = self.embedding_space()
+            if stored is None or not self._space_mismatch(stored, ident):
+                return None
+            if not self._has_vectors():
+                return None
+            return {
+                "stored": {
+                    "provider": stored["provider"], "model": stored["model"],
+                    "dim": stored["dim"],
+                },
+                "detected": {
+                    "provider": ident.provider, "model": ident.model, "dim": ident.dim,
+                },
+            }
+        except Exception:  # reporting must never raise
+            return None
+
     def _rebuild_vec_tables(self, dim: int) -> None:
         """Recreate both vec tables at `dim` and queue everything for re-embed.
 
@@ -342,46 +417,82 @@ class SQLiteStore:
                 if declared is not None and declared != ident.dim:
                     # Pre-feature DB whose width disagrees with the active
                     # embedder: trust the TABLE, not the provider, then let the
-                    # mismatch below rebuild. Stamping the active identity here
-                    # would silently label 1536-dim vectors as 384.
+                    # mismatch check below decide whether to rebuild. Stamping
+                    # the active identity here would silently label 1536-dim
+                    # vectors as 384.
                     self._stamp_embedding_space("unknown", "", declared)
                     stored = self.embedding_space()
                 else:
                     self._stamp_embedding_space(ident.provider, ident.model, ident.dim)
                     return
 
-            if stored["dim"] != ident.dim or stored["model"] != ident.model:
-                # Log intent before the rebuild (M4: diagnose if rebuild fails)
-                logger.info(
-                    "embedding space change (%s/%sd -> %s/%sd)%s; rebuilding "
-                    "index",
+            # Mismatch detection covers BOTH the recorded stamp and the vec
+            # tables' actual physical width (Change A). A stamp-only check
+            # leaves a permanent wedge: if _rebuild_vec_tables commits
+            # (tables now at the new width) but _stamp_embedding_space then
+            # fails — a transient cross-process lock is realistic, since
+            # /br8n:capture sweeps every live Claude Code session against the
+            # same DB — the stamp is stuck at the OLD identity while the
+            # tables are already at the NEW one. If the caller then reverts
+            # to the old provider, the active identity matches the STALE
+            # stamp exactly, so a stamp-only comparison would never re-fire,
+            # wedging every insert forever. See ``_space_mismatch``.
+            if not self._space_mismatch(stored, ident):
+                return
+
+            # Work-at-risk gate (spec AC2, amended 2026-07-28; Change B). An
+            # EXPLICIT choice (source "settings"/"config") proceeds
+            # immediately, exactly as before. An AUTO-DETECTED change
+            # proceeds immediately only when nothing would be discarded — a
+            # fresh keyless install has no vectors to lose, so it must stay
+            # zero-interaction (AC1). An auto-detected change that WOULD
+            # discard existing vectors is deferred instead of silently
+            # rebuilt: the space is left exactly as it is, and
+            # br8n_embeddings_get/--check surface the offer (see
+            # ``pending_embedding_switch``) — decisions gate at turn
+            # boundaries, never mid-flow (CLAUDE.md). This composes with the
+            # physical-width check above: in the wedge state the vec tables
+            # were JUST recreated and hold no rows, so "nothing to discard"
+            # is true and the heal proceeds even when the identity that
+            # matches the stale stamp happens to be auto-detected.
+            if ident.source == "auto" and self._has_vectors():
+                logger.warning(
+                    "embedding space change available but deferred (auto-detected, "
+                    "%s/%sd -> %s/%sd); %d existing vector(s) would be discarded — "
+                    "run /br8n:embeddings to apply",
                     stored["model"] or stored["provider"], stored["dim"],
-                    ident.model, ident.dim,
-                    " [provider auto-detected, not explicitly configured]"
-                    if ident.source == "auto" else "",
+                    ident.model, ident.dim, self._vector_row_count(),
                 )
-                self._rebuild_vec_tables(ident.dim)
-                self._stamp_embedding_space(ident.provider, ident.model, ident.dim)
-                n_queued = self._conn.execute(
-                    "SELECT (SELECT COUNT(*) FROM findings WHERE needs_embed = 1) + "
-                    "(SELECT COUNT(*) FROM kg_nodes WHERE needs_embed = 1) AS n;"
-                ).fetchone()["n"]
-                # WARNING (not INFO) only when work was actually discarded
-                # (I1: gate on n_queued > 0 to avoid false alarms on clean DBs).
-                # With the local extra installed, opening the store from a shell
-                # that happens not to export AI_GATEWAY_API_KEY silently flips
-                # remote/1536 -> local/384 and drops every vector; on a remote
-                # provider that's a paid re-embed of the whole corpus.
-                log = logger.warning if (ident.source == "auto" and n_queued > 0) else logger.info
-                log(
-                    "embedding space change (%s/%sd -> %s/%sd)%s; %d row(s) "
-                    "queued for re-embed",
-                    stored["model"] or stored["provider"], stored["dim"],
-                    ident.model, ident.dim,
-                    " [provider auto-detected, not explicitly configured]"
-                    if ident.source == "auto" else "",
-                    n_queued,
-                )
+                return
+
+            # Log intent before the rebuild (M4: diagnose if rebuild fails)
+            logger.info(
+                "embedding space change (%s/%sd -> %s/%sd)%s; rebuilding "
+                "index",
+                stored["model"] or stored["provider"], stored["dim"],
+                ident.model, ident.dim,
+                " [provider auto-detected, not explicitly configured]"
+                if ident.source == "auto" else "",
+            )
+            self._rebuild_vec_tables(ident.dim)
+            self._stamp_embedding_space(ident.provider, ident.model, ident.dim)
+            n_queued = self._conn.execute(
+                "SELECT (SELECT COUNT(*) FROM findings WHERE needs_embed = 1) + "
+                "(SELECT COUNT(*) FROM kg_nodes WHERE needs_embed = 1) AS n;"
+            ).fetchone()["n"]
+            # Always INFO here: the gate above already ensures this point is
+            # only reached for an explicit choice, or an auto-detected one
+            # that discards nothing — neither is the silent-corpus-drop case
+            # the old WARNING existed to flag (that case now defers, above).
+            logger.info(
+                "embedding space change (%s/%sd -> %s/%sd)%s; %d row(s) "
+                "queued for re-embed",
+                stored["model"] or stored["provider"], stored["dim"],
+                ident.model, ident.dim,
+                " [provider auto-detected, not explicitly configured]"
+                if ident.source == "auto" else "",
+                n_queued,
+            )
         except Exception:  # identity problems never break a store
             logger.warning("embedding-space sync degraded", exc_info=True)
             try:

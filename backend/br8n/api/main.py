@@ -154,7 +154,8 @@ def check() -> int:
             from br8n.store import get_store
 
             ident = active_embedder()
-            conn = get_store()._conn
+            store = get_store()
+            conn = store._conn
             pending = (
                 conn.execute(
                     "SELECT COUNT(*) AS n FROM findings WHERE needs_embed = 1;"
@@ -179,7 +180,22 @@ def check() -> int:
                     detail += " — model loading"
                 if pending:
                     detail += f", {pending} pending re-embed"
-                line("ok" if not pending else "warn", "embeddings", detail)
+                status = "ok" if not pending else "warn"
+                # A deferred auto-detected switch (Change B, spec AC2 amended
+                # 2026-07-28): the existing space was intentionally left
+                # alone rather than silently rebuilt. Always "warn" — never
+                # touches `ok`/the exit code — and names both spaces plus the
+                # tool that applies it.
+                pending_switch = store.pending_embedding_switch()
+                if pending_switch:
+                    stored, detected = pending_switch["stored"], pending_switch["detected"]
+                    detail += (
+                        f"; switch available: {stored['provider']}/{stored['dim']}d -> "
+                        f"{detected['provider']}/{detected['dim']}d — run "
+                        "/br8n:embeddings to apply"
+                    )
+                    status = "warn"
+                line(status, "embeddings", detail)
         except Exception as exc:  # reporting never fails the doctor
             line("warn", "embeddings", f"unavailable: {exc}")
     else:

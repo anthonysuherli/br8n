@@ -673,6 +673,19 @@ def _pending_counts() -> tuple[int, int]:
         return 0, 0
 
 
+def _pending_switch() -> dict | None:
+    """A deferred auto-detected switch (Change B), or None. Local tier only —
+    mirrors the ``_pending_counts`` guard; cloud never runs this sync."""
+    from br8n.store import active_backend, get_store
+
+    if active_backend() != "local":
+        return None
+    try:
+        return get_store().pending_embedding_switch()
+    except Exception:  # reporting must not raise
+        return None
+
+
 def _embeddings_get_impl() -> dict:
     from br8n.clients import embed_local
     from br8n.clients.embeddings import active_embedder
@@ -692,6 +705,10 @@ def _embeddings_get_impl() -> dict:
         "ready": embed_local.ready(),
         "pending_findings": pending_findings,
         "pending_nodes": pending_nodes,
+        # None unless an auto-detected change is deferred (would discard
+        # existing vectors) — {"stored": {...}, "detected": {...}} when it
+        # is. /br8n:embeddings (br8n_embeddings_set) is what applies it.
+        "pending_switch": _pending_switch(),
     }
 
 
@@ -781,10 +798,14 @@ def _embeddings_set_impl(provider: str) -> dict:
 @mcp.tool()
 def br8n_embeddings_get() -> dict:
     """Report the active embedding provider: {provider, model, dim, source,
-    extra_installed, model_cached, ready, pending_findings, pending_nodes}.
-    `source` names what decided it — "settings" (~/.br8n/settings.json),
-    "config" (config.yaml / B2_EMBEDDING__PROVIDER) or "auto" (detection).
-    Used by /br8n:embeddings."""
+    extra_installed, model_cached, ready, pending_findings, pending_nodes,
+    pending_switch}. `source` names what decided it — "settings"
+    (~/.br8n/settings.json), "config" (config.yaml / B2_EMBEDDING__PROVIDER)
+    or "auto" (detection). `pending_switch` is None unless an auto-detected
+    environment change (e.g. a key going missing) would discard existing
+    vectors — that case is deferred rather than silently rebuilt, and
+    `pending_switch` reports {stored, detected}: run br8n_embeddings_set to
+    apply it. Used by /br8n:embeddings."""
     return _embeddings_get_impl()
 
 

@@ -24,12 +24,19 @@ model and *why* it was chosen (`source`), then flag anything actionable:
   background. It refills on ordinary reads; no action needed.
 - `provider: none` → say what would fix it: either set a key, or
   `pip install 'br8n[local-embeddings]'` and switch to local.
+- `pending_switch` not `null` → the environment quietly changed (e.g. a key
+  went missing) and would flip the space (`pending_switch.stored` →
+  `pending_switch.detected`), but existing vectors are at risk, so br8n left
+  them alone instead of rebuilding. Tell the user what changed and offer to
+  apply it — that offer is exactly Step 2.
 
 ## Step 2 — Switch, if asked
 
 Call `mcp__plugin_br8n_br8n__br8n_embeddings_set(provider)` with `auto`,
 `remote`, `local` or `none`. `auto` is the default and means "use a key if
-there is one, else local".
+there is one, else local". This is also how a deferred `pending_switch` is
+applied — pass the `detected.provider` from Step 1 (or `auto`) once the user
+confirms.
 
 The change lands in `~/.br8n/settings.json` and applies to the next call — **no
 MCP server restart**. If the tool returns `ok: false`, relay `error` and, when
@@ -37,12 +44,22 @@ present, run nothing yourself: show the user the `fix` command.
 
 ## What a switch costs
 
-Vectors from different models are not comparable, so changing provider
-rebuilds the index in place: br8n resizes the vector tables, drops the old
-vectors, and re-embeds in the background from content it already has.
+Vectors from different models are not comparable, so an explicit switch via
+this tool rebuilds the index in place: br8n resizes the vector tables, drops
+the old vectors, and re-embeds in the background from content it already has.
 `queued_rebuild` in the response says how many rows were just flagged. Search
 quality dips until the drain finishes, then recovers — nothing is lost,
 because the text is canonical (in the DB and, on the vault tier, on disk).
+
+An **auto-detected** environment change (no `br8n_embeddings_set` call — the
+key just came or went) behaves differently once real vectors exist: br8n
+does **not** rebuild on its own. Discarding a corpus of vectors is not a
+decision to make silently mid-flow, so the space is left exactly as it is and
+the pending switch surfaces via `pending_switch` (Step 1) / the `--check`
+doctor line instead — this tool is what applies it once the user says go. The
+only case that still rebuilds with no confirmation is a fresh install with
+nothing to lose (an empty vector table), which is what keeps a brand-new
+keyless machine zero-interaction.
 
 If the rebuild itself fails partway (a locked DB, a transient I/O error), the
 tool does not report success on a half-done switch: it rolls the setting back
