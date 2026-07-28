@@ -315,6 +315,7 @@ class VaultConfig(BaseModel):
     """Vault reconcile knobs — local tier only (see the VaultStore spec)."""
 
     reconcile_debounce_seconds: float = 20.0  # min gap between reconcile passes
+    reconcile_walk_cap_ms: int = 500          # Phase A walk budget per pass
     reconcile_time_cap_ms: int = 200          # scan budget per pass
     reconcile_batch_cap: int = 200            # max suspect files processed per pass
     re_embed_batch: int = 32                  # stale rows re-embedded per async read

@@ -500,6 +500,132 @@ async def test_adopt_writes_id_back_for_agent_sourced_file(store):
     assert any(f["id"] == fm["br8n_id"] for f in listed["findings"])
 
 
+# --- Hardening: Phase A walk budget — deletions defer, never misfire --------
+
+
+@pytest.mark.asyncio
+async def test_walk_budget_defers_deletions(store, monkeypatch):
+    import os
+
+    from br8n.config import get_config
+
+    kb_id = _mk_kb(store)
+    fids = [await _insert(store, kb_id, title=f"Note {i}") for i in range(3)]
+    victim = fids[0]
+    os.unlink(store.vault_path_for(victim))
+
+    cfg = get_config().vault
+    monkeypatch.setattr(cfg, "reconcile_walk_cap_ms", 0)  # walk can't complete
+    counters = reconcile.reconcile(store, force=True)
+    assert counters["deleted"] == 0  # Phase D deferred, not misfired
+    assert store.get_finding(kb_id, victim)["title"] == "Note 0"
+
+    # an explicit reindex (ignore_caps) bypasses the walk budget too
+    counters2 = reconcile.reconcile(store, force=True, ignore_caps=True)
+    assert counters2["deleted"] == 1
+    with pytest.raises(RuntimeError):
+        store.get_finding(kb_id, victim)
+
+
+# --- Hardening: rowless malformed files must not re-count every pass --------
+
+
+@pytest.mark.asyncio
+async def test_rowless_malformed_file_counts_once(store):
+    _mk_kb(store)
+    d = layout.vault_root() / "notes" / "br8n" / "main"
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / "2026-07-27-1600-broken.md"
+    p.write_text("---\ntags: [broken\n---\n\nbody\n")
+
+    first = reconcile.reconcile(store, force=True)
+    assert first["malformed"] == 1
+    second = reconcile.reconcile(store, force=True)
+    assert second["malformed"] == 0  # same broken bytes — already counted
+
+    # fixing the file clears the memo and it adopts normally
+    p.write_text("---\ntitle: Fixed\n---\n\n# Fixed\n\nbody\n")
+    third = reconcile.reconcile(store, force=True)
+    assert third["adopted"] == 1
+    assert third["malformed"] == 0
+
+
+# --- Hardening: a bulk rename must not trip the mass-delete guard -----------
+
+
+@pytest.mark.asyncio
+async def test_bulk_rename_does_not_trip_mass_delete_guard(store):
+    import os
+
+    kb_id = _mk_kb(store)
+    fids = [await _insert(store, kb_id, title=f"Note {i}") for i in range(12)]
+    victim = fids[0]
+    os.unlink(store.vault_path_for(victim))  # one genuine deletion
+    for fid in fids[1:]:  # bulk rename everything else (Obsidian batch op)
+        old = Path(store.vault_path_for(fid))
+        os.rename(old, old.with_name("renamed-" + old.name))
+
+    counters = reconcile.reconcile(store, force=True)
+
+    assert counters["adopted"] == 11
+    assert counters["deleted"] == 1  # rename candidates filtered — guard silent
+    with pytest.raises(RuntimeError):
+        store.get_finding(kb_id, victim)
+    for fid in fids[1:]:
+        assert store.get_finding(kb_id, fid)  # renamed rows all survive
+
+
+# --- Hardening: re-adoption records a vault-adopted provenance marker -------
+
+
+@pytest.mark.asyncio
+async def test_rename_appends_vault_adopted_marker(store):
+    import os
+
+    kb_id = _mk_kb(store)
+    [fid] = await store.insert_findings(
+        [{"kb_id": kb_id, "title": "Snap", "content": "# Snap\n\nbody",
+          "category": "snapshot", "confidence": 1.0, "tags": [],
+          "provenance": [{"source": "capture", "session": "abc"}],
+          "embedding": None}]
+    )
+    old_path = Path(store.vault_path_for(fid))
+    new_path = old_path.with_name("renamed-" + old_path.name)
+    os.rename(old_path, new_path)
+
+    counters = reconcile.reconcile(store, force=True, ignore_caps=True)
+    assert counters["adopted"] == 1
+
+    prov = store.get_finding(kb_id, fid)["provenance"]
+    assert any(p.get("source") == "capture" for p in prov)  # original kept
+    markers = [p for p in prov if p.get("source") == "vault-adopted"]
+    assert markers and markers[-1]["path"] == str(new_path)
+
+    # a second reconcile of the unchanged file must not stack duplicates
+    reconcile.reconcile(store, force=True, ignore_caps=True)
+    prov2 = store.get_finding(kb_id, fid)["provenance"]
+    assert prov2 == prov
+
+
+# --- Hardening: only parse failures count as malformed ----------------------
+
+
+@pytest.mark.asyncio
+async def test_non_parse_valueerror_not_counted_malformed(store, monkeypatch):
+    _mk_kb(store)
+    d = layout.vault_root() / "notes" / "br8n" / "main"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "2026-07-27-1700-fine.md").write_text("# Fine\n\nbody\n")
+
+    def boom(*a, **k):
+        raise ValueError("deep failure unrelated to parsing")
+
+    monkeypatch.setattr(store, "resolve_project", boom)
+    counters = reconcile.reconcile(store, force=True)
+    assert counters["malformed"] == 0  # not a broken file — a broken pass
+    assert counters["adopted"] == 0
+
+
 # --- Minor: an mtime-only touch restamps without a spurious update ---------
 
 

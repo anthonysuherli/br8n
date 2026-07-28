@@ -31,6 +31,9 @@ class VaultStore(SQLiteStore):
         super().__init__(db_path)
         self._last_reconcile = 0.0  # time.monotonic() of the last pass (Task 4)
         self._reconcile_cursor = ""  # carry-over across batch-capped passes
+        # rowless malformed files memoized as path -> (mtime, size) so the
+        # same broken bytes count (and re-parse) once, not every pass
+        self._malformed_seen: dict[str, tuple[float, int]] = {}
         try:
             from br8n.vault.migrate import export_missing
 

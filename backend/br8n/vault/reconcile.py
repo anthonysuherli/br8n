@@ -12,16 +12,24 @@ row text and mark ``needs_embed`` (the vec row is dropped); re-embedding
 happens on the next async read (Task 5).
 
 A pass has four phases:
-  A. walk    — collect every canonical .md path (uncapped, no stat — this
-               phase is therefore ALWAYS a complete pass over the vault).
+  A. walk    — collect every canonical .md path (no stat). Time-budgeted
+               (``reconcile_walk_cap_ms``) so a huge vault can't stall every
+               non-debounced read; when the budget trips, the pass covers a
+               prefix of the tree and Phase D is skipped entirely (deletions
+               defer to a completed walk or an explicit reindex; the doctor
+               keeps reporting the drift via ``vault_health``).
   B. scan    — stat each path starting after the carry-over cursor, wrapping
                at most once around the full list; time-capped. Sets
                ``scan_complete`` iff the whole list was covered this call
                (used only to decide whether to reset the cursor).
-  C. apply   — adopt/edit/malformed suspects, batch-capped.
-  D. delete  — driven by Phase A's (always-complete) walk, not by whether
+  C. apply   — adopt/edit/malformed suspects, batch-capped. Only a
+               frontmatter parse failure counts as malformed; rowless
+               malformed files are memoized by (mtime, size) so the same
+               broken bytes count once, not every pass.
+  D. delete  — driven by Phase A's walk WHEN IT COMPLETED, not by whether
                Phase B's stat scan finished — a partial stat scan must never
-               suppress a genuine deletion. Guarded by: at least one
+               suppress a genuine deletion. Rows re-adopted this pass (a
+               rename) are not candidates. Guarded by: at least one
                canonical dir exists under the current root (a missing/
                re-pointed root must never look like "everything was
                deleted") and only rows whose vault_path is under the CURRENT
@@ -52,6 +60,19 @@ from br8n.vault import files, layout
 logger = logging.getLogger(__name__)
 
 _DIR_CATEGORY = {"snapshots": "snapshot", "notes": "note", "journal": "journal"}
+
+
+class _MalformedFile(ValueError):
+    """A canonical file whose frontmatter failed to parse (and only that)."""
+
+
+def _parse_file(text: str) -> tuple[dict, str]:
+    """files.parse with the failure narrowed to _MalformedFile, so Phase C
+    can't mistake an unrelated ValueError from deeper code for a broken file."""
+    try:
+        return files.parse(text)
+    except ValueError as exc:
+        raise _MalformedFile(str(exc)) from exc
 
 
 def _coerce_tags(value) -> list:
@@ -96,7 +117,11 @@ def reconcile(store, *, force: bool = False, ignore_caps: bool = False) -> dict:
 def _pass(store, cfg, counters: dict, ignore_caps: bool) -> None:
     root = layout.vault_root()
 
-    # Phase A: walk — pure directory listing, uncapped, no stat.
+    # Phase A: walk — pure directory listing, no stat. Time-budgeted so a
+    # huge vault can't stall every non-debounced read; a tripped budget
+    # yields a prefix of the tree and skips Phase D (see module docstring).
+    walk_deadline = time.monotonic() + cfg.reconcile_walk_cap_ms / 1000.0
+    walk_complete = True
     any_dir_exists = False
     all_paths: list[str] = []
     for d in layout.CANONICAL_DIRS:
@@ -105,7 +130,12 @@ def _pass(store, cfg, counters: dict, ignore_caps: bool) -> None:
             continue
         any_dir_exists = True
         for path in base.rglob("*.md"):
+            if not ignore_caps and time.monotonic() > walk_deadline:
+                walk_complete = False
+                break
             all_paths.append(str(path))
+        if not walk_complete:
+            break
     all_paths.sort()
     n = len(all_paths)
 
@@ -136,6 +166,16 @@ def _pass(store, cfg, counters: dict, ignore_caps: bool) -> None:
         counters["scanned"] += 1
         row = index.get(sp)
         if row is None:
+            memo = store._malformed_seen.get(sp)
+            if memo is not None:
+                try:
+                    st = path.stat()
+                except OSError:
+                    store._malformed_seen.pop(sp, None)
+                    continue
+                if (st.st_mtime, st.st_size) == memo:
+                    continue  # same broken bytes — counted on a prior pass
+                store._malformed_seen.pop(sp, None)
             suspects.append(path)
             continue
         try:
@@ -151,16 +191,19 @@ def _pass(store, cfg, counters: dict, ignore_caps: bool) -> None:
     if not ignore_caps:
         suspects = suspects[: cfg.reconcile_batch_cap]
 
+    adopted_ids: set[str] = set()
     for path in suspects:
         sp = str(path)
         row = index.get(sp)
         try:
             if row is None:
-                if _adopt(store, path):
+                fid = _adopt(store, path)
+                if fid:
                     counters["adopted"] += 1
+                    adopted_ids.add(fid)
             elif _apply_edit(store, path, row):
                 counters["updated"] += 1
-        except ValueError:
+        except _MalformedFile:
             counters["malformed"] += 1
             if row is not None:
                 # M2: restamp so a still-broken file stops burning scan
@@ -173,19 +216,36 @@ def _pass(store, cfg, counters: dict, ignore_caps: bool) -> None:
                     )
                 except Exception:  # noqa: BLE001
                     logger.warning("malformed restamp failed for %s", path, exc_info=True)
+            else:
+                # rowless: nothing to restamp — memoize (mtime, size) so the
+                # same broken bytes don't re-count every pass
+                try:
+                    st = path.stat()
+                    store._malformed_seen[sp] = (st.st_mtime, st.st_size)
+                except OSError:
+                    pass
         except Exception:  # noqa: BLE001 — one bad file never stops the pass
             logger.warning("reconcile failed for %s", path, exc_info=True)
 
-    # Phase D: deletions — driven by Phase A's walk (F1: always a complete
-    # pass, unlike Phase B's time-capped stat scan — a partial stat scan must
-    # never suppress a genuine deletion). Guarded by (C1) at least one
-    # canonical dir existing under the current root, and rows under the
-    # CURRENT root only being candidates at all.
-    if any_dir_exists:
+    # Phase D: deletions — driven by Phase A's walk when it COMPLETED (F1: a
+    # partial stat scan must never suppress a genuine deletion; a partial
+    # WALK must never manufacture one, so a tripped walk budget defers the
+    # whole sweep). Guarded by (C1) at least one canonical dir existing under
+    # the current root, and rows under the CURRENT root only being candidates
+    # at all. Rows re-adopted this pass (an Obsidian rename) are excluded
+    # up front so a bulk rename can't spuriously trip the magnitude guard.
+    if any_dir_exists and walk_complete:
         all_paths_set = set(all_paths)
+        # prune malformed memos for files that no longer exist on disk
+        store._malformed_seen = {
+            k: v for k, v in store._malformed_seen.items() if k in all_paths_set
+        }
         root_prefix = str(root) + os.sep
         under_root = [(sp, row) for sp, row in index.items() if sp.startswith(root_prefix)]
-        candidates = [(sp, row) for sp, row in under_root if sp not in all_paths_set]
+        candidates = [
+            (sp, row) for sp, row in under_root
+            if sp not in all_paths_set and row["id"] not in adopted_ids
+        ]
 
         # F2: a magnitude guard — an empty-but-present tree (a sync client
         # materializing dirs before contents, evicted/online-only files)
@@ -218,6 +278,8 @@ def _pass(store, cfg, counters: dict, ignore_caps: bool) -> None:
                         "DELETE FROM vec_findings WHERE finding_id = ?;", (row["id"],)
                     )
                     counters["deleted"] += 1
+    elif any_dir_exists:
+        logger.debug("vault reconcile: walk budget exceeded — deletions deferred")
 
     store._conn.commit()
 
@@ -233,7 +295,7 @@ def _apply_edit(store, path: Path, row: dict) -> bool:
             (st.st_mtime, st.st_size, row["id"]),
         )
         return False
-    fm, body = files.parse(text)  # ValueError → counted as malformed by caller
+    fm, body = _parse_file(text)  # _MalformedFile → counted by caller
 
     # br8n_id self-heal: an edit that stripped (or mismatched) the join key
     # must not silently orphan the file for future renames — write the row's
@@ -274,14 +336,17 @@ def _apply_edit(store, path: Path, row: dict) -> bool:
     return True
 
 
-def _adopt(store, path: Path) -> bool:
-    """Index a file the engine has no row for (hand-written, or a fresh db)."""
+def _adopt(store, path: Path) -> str | None:
+    """Index a file the engine has no row for (hand-written, or a fresh db).
+
+    Returns the finding id the file landed under (Phase D excludes it from
+    the deletion candidates so a rename never counts against the guard)."""
     import json
 
     from br8n.store.sqlite import _json_load
 
     text = path.read_text(encoding="utf-8")
-    fm, body = files.parse(text)  # ValueError propagates → malformed
+    fm, body = _parse_file(text)  # _MalformedFile propagates → counted
     fid = str(fm.get("br8n_id") or uuid.uuid4().hex)
 
     existing = store._conn.execute(
@@ -323,15 +388,17 @@ def _adopt(store, path: Path) -> bool:
     # file doesn't (fully) carry — e.g. a snapshot's hypothesis/thread_id
     # only ever lived in the metadata column, never in frontmatter, so
     # rebuilding purely from the file would silently drop them. Merge:
-    # start from the existing row's provenance/metadata, then apply the
-    # file's next_action. A brand-new id has nothing of its own to merge.
+    # start from the existing row's provenance/metadata, append a
+    # vault-adopted marker recording where the row was re-joined from, then
+    # apply the file's next_action. A brand-new id has nothing to merge.
+    marker = {"source": "vault-adopted", "path": str(path)}
     if existing is not None:
-        provenance = _json_load(existing["provenance"], None)
-        if provenance is None:
-            provenance = [{"source": "vault-adopted", "path": str(path)}]
+        provenance = _json_load(existing["provenance"], None) or []
+        if marker not in provenance:
+            provenance.append(marker)
         meta = _json_load(existing["metadata"], None) or {}
     else:
-        provenance = [{"source": "vault-adopted", "path": str(path)}]
+        provenance = [marker]
         meta = {}
     if fm.get("next_action"):
         meta["next_action"] = str(fm["next_action"])
@@ -359,7 +426,7 @@ def _adopt(store, path: Path) -> bool:
          json.dumps(provenance),
          json.dumps(meta) if meta else None, created, str(path), h, st.st_mtime, st.st_size),
     )
-    return True
+    return fid
 
 
 def _target_for(path: Path, fm: dict) -> tuple[str, str, str]:
