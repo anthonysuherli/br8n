@@ -656,7 +656,11 @@ async def test_facade_raises_for_none_provider(monkeypatch):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/embeddings/test_embed_local.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'br8n.clients.embed_local'`
+Expected: FAIL with `AttributeError` on `embed_local.reset` / `embed_local.ready`.
+Note: Task 2 had to create a one-function stub at this path (pytest's
+`monkeypatch.setattr("br8n.clients.embed_local.installed", ...)` imports the
+module, and `raising=False` does not excuse a missing module). **Replace that
+file wholesale** with the implementation below — do not append to it.
 
 - [ ] **Step 3: Implement the provider**
 
