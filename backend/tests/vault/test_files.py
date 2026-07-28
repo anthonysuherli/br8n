@@ -59,3 +59,28 @@ def test_atomic_write_and_hash(tmp_path):
 def test_title_from_body():
     assert files.title_from_body("# My Title\n\nx", "fb") == "My Title"
     assert files.title_from_body("no heading", "fb") == "fb"
+
+
+def test_parse_empty_frontmatter_block_raises():
+    with pytest.raises(ValueError):
+        files.parse("---\n\n---\n\nbody\n")
+
+
+def test_parse_non_dict_frontmatter_raises():
+    with pytest.raises(ValueError):
+        files.parse("---\n- a\n- b\n---\n\nbody\n")
+
+
+def test_round_trip_unicode():
+    fm = {"br8n_id": "x", "title": "日本語 — émoji 🚀"}
+    parsed_fm, body = files.parse(files.serialize(fm, "内容 café"))
+    assert parsed_fm == fm
+    assert body == "内容 café\n"
+
+
+def test_atomic_write_overwrites_existing(tmp_path):
+    p = tmp_path / "f.md"
+    files.atomic_write(p, "old\n")
+    h = files.atomic_write(p, "new\n")
+    assert p.read_text() == "new\n"
+    assert h == files.content_hash("new\n")

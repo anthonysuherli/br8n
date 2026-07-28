@@ -24,7 +24,11 @@ def serialize(frontmatter: dict, body: str) -> str:
 
 
 def parse(text: str) -> tuple[dict, str]:
-    """Split a document into (frontmatter, body). No frontmatter → ({}, text)."""
+    """Split a document into (frontmatter, body).
+
+    No fence or unclosed fence → ({}, text).
+    Fenced but YAML malformed or not a mapping → ValueError.
+    """
     if not text.startswith("---\n"):
         return {}, text
     end = text.find("\n---", 4)
@@ -35,7 +39,7 @@ def parse(text: str) -> tuple[dict, str]:
     except yaml.YAMLError as exc:
         raise ValueError(f"malformed frontmatter: {exc}") from exc
     if not isinstance(fm, dict):
-        return {}, text
+        raise ValueError("frontmatter is not a mapping")
     body = text[end + 4 :].lstrip("\n")
     if body and not body.endswith("\n"):
         body += "\n"
