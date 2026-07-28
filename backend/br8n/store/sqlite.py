@@ -216,14 +216,33 @@ class SQLiteStore:
             return None
         return {"provider": r["provider"], "model": r["model"], "dim": int(r["dim"])}
 
-    def _declared_vec_dim(self) -> int | None:
-        """Width the existing vec_findings table was created with, if any."""
-        r = self._conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='vec_findings';"
-        ).fetchone()
-        if r is None or not r["sql"]:
+    def _vec_findings_sql(self) -> str | None:
+        """Raw CREATE-table SQL for vec_findings, or None if the table is absent.
+
+        Guarded like ``embedding_space()`` (unlike the ``_declared_vec_dim``
+        this backs, which used to run unguarded): a locked/corrupt DB must
+        degrade to "no table", not propagate ``sqlite3.OperationalError``."""
+        try:
+            r = self._conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='vec_findings';"
+            ).fetchone()
+        except Exception:
             return None
-        m = re.search(r"float\[(\d+)\]", r["sql"])
+        return r["sql"] if r is not None and r["sql"] else None
+
+    def _declared_vec_dim(self) -> int | None:
+        """Width the existing vec_findings table was created with, if any.
+
+        Returns None both when the table is absent AND when it exists but its
+        width can't be parsed — callers that need to tell those two apart
+        (see ``_sync_embedding_space``) use ``_vec_findings_sql`` directly."""
+        sql = self._vec_findings_sql()
+        if sql is None:
+            return None
+        # IGNORECASE: a foreign/future vec0 schema may spell the type
+        # differently (``FLOAT[384]``); a case-sensitive miss must not be
+        # treated the same as "no table at all" (see _sync_embedding_space).
+        m = re.search(r"float\[(\d+)\]", sql, re.IGNORECASE)
         return int(m.group(1)) if m else None
 
     def _stamp_embedding_space(self, provider: str, model: str, dim: int) -> None:
@@ -242,6 +261,17 @@ class SQLiteStore:
         Safe because vectors are derived: the text lives in ``findings.content``
         and, on the vault tier, canonically on disk. The refill is the existing
         lazy ``needs_embed`` drain, so this call stays cheap (DDL + 2 UPDATEs).
+
+        M4 — two-transaction window: ``executescript`` implicitly commits, so
+        the DROP+CREATE below lands as its own transaction before the two
+        UPDATEs even begin. If a UPDATE then fails, the outer handler's
+        ``rollback()`` can only undo the flags, not the DDL — leaving empty
+        vec tables with nothing flagged for re-embed. This is acceptable: the
+        ``embedding_space`` stamp is only written by the caller *after* this
+        method returns (see the rebuild-BEFORE-stamp ordering in
+        ``_sync_embedding_space``), so the stamp stays stale and the next
+        store open re-detects the mismatch and retries the whole rebuild —
+        it self-heals rather than needing a mid-rebuild transaction.
         """
         self._conn.executescript(
             "DROP TABLE IF EXISTS vec_findings; DROP TABLE IF EXISTS vec_kg_nodes;"
@@ -256,11 +286,29 @@ class SQLiteStore:
 
         Never raises: a failure here must not stop a store from opening, so the
         vec tables are created up-front at a safe width and the identity logic
-        runs afterwards.
+        runs afterwards. Everything that can fail — including resolving
+        ``get_config()`` itself — lives inside the try block: this method is
+        called from ``__init__`` via ``_ensure_schema``, so anything raised
+        here previously raised straight through store construction (I1).
+
+        Safe-width fallback precedence: the declared table width (table
+        already exists) → the last stamped dim (a stamp survived a dropped
+        table) → ``config.embedding.dim`` → a literal 1536 if config
+        resolution itself blows up (malformed config.yaml / bad
+        ``B2_EMBEDDING__DIM``) — a store must always open with usable vec
+        tables regardless of config state (M3 + I1).
         """
-        declared = self._declared_vec_dim()
-        fallback = declared or get_config().embedding.dim
         try:
+            declared = self._declared_vec_dim()
+            fallback = declared
+            if fallback is None:
+                stamped = self.embedding_space()
+                fallback = stamped["dim"] if stamped is not None else None
+            if fallback is None:
+                try:
+                    fallback = get_config().embedding.dim
+                except Exception:
+                    fallback = 1536  # literal: config resolution must never block open
             self._conn.executescript(_vec_schema(fallback))
             self._conn.executescript(_EMBEDDING_SPACE_SCHEMA)
             self._conn.commit()
@@ -279,7 +327,14 @@ class SQLiteStore:
 
             stored = self.embedding_space()
             if stored is None:
+                vec_sql = self._vec_findings_sql()
                 declared = self._declared_vec_dim()
+                if vec_sql is not None and declared is None:
+                    # Table present but its width didn't parse (M2): never
+                    # guess — leave the existing (unknown-width) space alone
+                    # rather than stamping the active identity blindly over
+                    # vectors that might be a different width entirely.
+                    return
                 if declared is not None and declared != ident.dim:
                     # Pre-feature DB whose width disagrees with the active
                     # embedder: trust the TABLE, not the provider, then let the
@@ -292,13 +347,27 @@ class SQLiteStore:
                     return
 
             if stored["dim"] != ident.dim or stored["model"] != ident.model:
-                logger.info(
-                    "embedding space change (%s/%sd -> %s/%sd); rebuilding index",
-                    stored["model"] or stored["provider"], stored["dim"],
-                    ident.model, ident.dim,
-                )
                 self._rebuild_vec_tables(ident.dim)
                 self._stamp_embedding_space(ident.provider, ident.model, ident.dim)
+                n_queued = self._conn.execute(
+                    "SELECT (SELECT COUNT(*) FROM findings WHERE needs_embed = 1) + "
+                    "(SELECT COUNT(*) FROM kg_nodes WHERE needs_embed = 1) AS n;"
+                ).fetchone()["n"]
+                # WARNING (not INFO) when the provider was auto-detected: with
+                # the local extra installed, opening the store from a shell
+                # that happens not to export AI_GATEWAY_API_KEY silently flips
+                # remote/1536 -> local/384 and drops every vector; on a remote
+                # provider that's a paid re-embed of the whole corpus.
+                log = logger.warning if ident.source == "auto" else logger.info
+                log(
+                    "embedding space change (%s/%sd -> %s/%sd)%s; rebuilding "
+                    "index, %d row(s) queued for re-embed",
+                    stored["model"] or stored["provider"], stored["dim"],
+                    ident.model, ident.dim,
+                    " [provider auto-detected, not explicitly configured]"
+                    if ident.source == "auto" else "",
+                    n_queued,
+                )
         except Exception:  # identity problems never break a store
             logger.warning("embedding-space sync degraded", exc_info=True)
             try:
