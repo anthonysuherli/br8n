@@ -139,6 +139,14 @@ class EmbeddingConfig(BaseModel):
     input_char_cap: int = 8192
     chunk_max_chars: int = 1800
 
+    # Provider selection: "auto" resolves remote-key → local(fastembed) → none.
+    # Overridable per-machine from Claude Code (settings.json) or per-deploy
+    # via B2_EMBEDDING__PROVIDER.
+    provider: str = "auto"  # auto | remote | local | none
+    local_model: str = "BAAI/bge-small-en-v1.5"
+    local_dim: int = 384
+    local_threads: int = 1  # onnxruntime intra_op_num_threads
+
 
 class ActivityConfig(BaseModel):
     """Activity knowledge graph — the per-user, cross-repo work graph.
