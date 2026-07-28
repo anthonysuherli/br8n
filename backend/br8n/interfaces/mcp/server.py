@@ -698,7 +698,7 @@ def _embeddings_get_impl() -> dict:
 def _embeddings_set_impl(provider: str) -> dict:
     from br8n.clients import embed_local
     from br8n.settings_file import save_setting
-    from br8n.store import active_backend
+    from br8n.store import active_backend, get_store
 
     if provider not in _VALID_EMBED_PROVIDERS:
         return {
@@ -723,6 +723,15 @@ def _embeddings_set_impl(provider: str) -> dict:
             }
 
     save_setting("embedding_provider", provider)
+    if active_backend() == "local":
+        # get_store() caches one store per db_path for the process lifetime
+        # (the whole point — so a switch survives without an MCP server
+        # restart), which means the store never re-runs its construction-time
+        # embedding-space sync on its own. Resync the SAME live store in
+        # place — popping the cache would abandon an open sqlite connection —
+        # so vec_findings/vec_kg_nodes actually resize and existing rows get
+        # flagged needs_embed=1 before we report pending counts below.
+        get_store().resync_embedding_space()
     state = _embeddings_get_impl()
     if state["provider"] == "local":
         embed_local.warm_up()
@@ -748,9 +757,12 @@ def br8n_embeddings_set(provider: str) -> dict:
     """Set the embedding provider — "auto" | "remote" | "local" | "none" —
     persisting to ~/.br8n/settings.json so it applies without restarting the
     MCP server. Refuses "local" when the extra is missing (returns the pip
-    command in `fix`) or on the cloud tier. On success returns {ok: True,
-    ...state, queued_rebuild} where queued_rebuild is how many rows will
-    re-embed in the background. Used by /br8n:embeddings."""
+    command in `fix`) or on the cloud tier. On success, resyncs the live
+    store in place (resizes vec_findings/vec_kg_nodes and flags existing
+    rows needs_embed=1 when the provider actually changed dim) and returns
+    {ok: True, ...state, queued_rebuild} where queued_rebuild is how many
+    rows were just flagged and will re-embed in the background. Used by
+    /br8n:embeddings."""
     return _embeddings_set_impl(provider)
 
 

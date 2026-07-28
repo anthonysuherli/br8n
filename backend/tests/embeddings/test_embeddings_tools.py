@@ -90,3 +90,46 @@ def test_set_auto_returns_to_detection(monkeypatch):
     out = server._embeddings_set_impl("auto")
     assert out["ok"] is True
     assert server._embeddings_get_impl()["provider"] == "remote"
+
+
+async def test_set_local_resyncs_the_live_store_and_prevents_dimension_mismatch(
+    monkeypatch,
+):
+    """I1: a live switch must rebuild vec_findings/vec_kg_nodes on the SAME
+    cached store object, not just re-resolve the reported identity — the
+    identity report (active_embedder()) is independent of the store's actual
+    stamped vec-table width. Without a resync, the store stays stamped at the
+    old dim and the next insert at the new dim raises a sqlite-vec dimension
+    mismatch."""
+    monkeypatch.setattr("br8n.clients.embeddings._creds_present", lambda: True)
+    monkeypatch.setattr("br8n.clients.embed_local.installed", lambda: True)
+    monkeypatch.setattr("br8n.clients.embed_local.warm_up", lambda: None)
+
+    from br8n.store import get_store
+
+    store = get_store()
+    org_id, pid = store.resolve_project("p", create=True)
+    kb_id = store.resolve_kb(org_id, pid, "k", create=True)
+    await store.insert_findings(
+        [{"kb_id": kb_id, "title": "t", "content": "c", "category": "note",
+          "confidence": 1.0, "tags": [], "provenance": [],
+          "embedding": [0.1] * 1536}]
+    )
+    assert store.embedding_space()["dim"] == 1536
+
+    out = server._embeddings_set_impl("local")
+
+    # The SAME store object (not a freshly constructed one) must reflect the
+    # rebuild — get_store() caches one VaultStore per db_path for the process
+    # lifetime, so a live switch has to resync in place.
+    assert store.embedding_space()["dim"] == 384
+    rows = store._conn.execute("SELECT needs_embed FROM findings;").fetchall()
+    assert rows and all(r["needs_embed"] == 1 for r in rows)
+    assert out["queued_rebuild"] >= 1
+
+    # The crash is gone: a 384-dim insert on the resynced store succeeds.
+    await store.insert_findings(
+        [{"kb_id": kb_id, "title": "t2", "content": "c2", "category": "note",
+          "confidence": 1.0, "tags": [], "provenance": [],
+          "embedding": [0.1] * 384}]
+    )

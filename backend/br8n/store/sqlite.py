@@ -389,6 +389,24 @@ class SQLiteStore:
             except Exception:
                 pass
 
+    def resync_embedding_space(self) -> None:
+        """Re-run the embedding-space sync against the CURRENT active_embedder().
+
+        ``_sync_embedding_space`` normally runs once, at construction (via
+        ``_ensure_schema``). ``get_store()`` caches one store per db_path for
+        the process lifetime, so a live provider switch (``br8n_embeddings_set``)
+        never reconstructs the store and the rebuild never fires on its own —
+        the reported identity updates (it reads settings fresh each call) but
+        the store's actual ``vec_findings``/``vec_kg_nodes`` width stays stale,
+        and the next insert at the new dim raises a sqlite-vec dimension
+        mismatch. Call this on the live, cached store right after such a
+        switch instead of evicting the cache — popping it would abandon an
+        open sqlite connection. Thin wrapper: ``_sync_embedding_space`` is
+        already idempotent and best-effort (never raises), so a no-op switch
+        (same provider) stays a no-op here too.
+        """
+        self._sync_embedding_space()
+
     # --- findings — hot path -------------------------------------------------
 
     async def match_findings(
