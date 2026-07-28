@@ -57,9 +57,22 @@ def _local_eligible() -> bool:
 
 
 def _requested() -> tuple[str, str]:
-    """(requested provider, source) before validation. Precedence lives here."""
+    """(requested provider, source) before validation. Precedence lives here.
+
+    A stored literal ``"auto"`` (what ``br8n_embeddings_set("auto")``
+    persists) is not an explicit provider choice — it means "detect it" —
+    so the provider it resolves to IS decided by auto-detection and must
+    report ``source="auto"``, not ``"settings"``. Only a stored concrete
+    provider (``local``/``remote``/``none``) is an explicit choice. This
+    distinction is what the work-at-risk gate in
+    ``br8n.store.sqlite._sync_embedding_space`` keys off of: an
+    auto-detected change that would discard existing vectors defers instead
+    of rebuilding, but only if it is correctly reported as ``"auto"`` here.
+    """
     stored = load_settings().get("embedding_provider")
     if isinstance(stored, str) and stored in _VALID_PROVIDERS:
+        if stored == "auto":
+            return "auto", "auto"
         return stored, "settings"
     configured = get_config().embedding.provider
     if configured in _VALID_PROVIDERS and configured != "auto":

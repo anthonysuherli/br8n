@@ -504,3 +504,65 @@ async def test_pending_switch_none_when_source_is_explicit(db, monkeypatch):
 
     assert store.pending_embedding_switch() is None
     store.close()
+
+
+@pytest.mark.asyncio
+async def test_stored_auto_plus_env_flip_defers_instead_of_destroying(db, monkeypatch):
+    """Regression for the hole in ``_requested()``: a stored literal "auto"
+    (what ``br8n_embeddings_set("auto")`` persists) must be reported as
+    source="auto", not "settings" — otherwise every later environment-driven
+    provider flip for a user who ever explicitly selected auto mode is
+    misclassified as an "explicit" choice, and the work-at-risk gate below
+    rebuilds (destroying vectors) instead of deferring. Unlike the other
+    gate tests in this file, this one does NOT inject an ``EmbedderIdentity``
+    directly — it drives the real ``active_embedder()`` through
+    ``settings_file`` + ``_creds_present``/``_local_eligible``, so it
+    exercises ``embeddings.py`` and ``sqlite.py`` together end to end,
+    exactly the seam where the hole lived."""
+    from br8n import settings_file
+    from br8n.clients import embeddings
+
+    monkeypatch.setenv("BR8N_DB_PATH", db)
+    settings_file.clear_cache()
+
+    settings_file.save_setting("embedding_provider", "auto")
+
+    # Environment #1: a remote key present -> auto-detects to remote/1536.
+    monkeypatch.setattr(embeddings, "_creds_present", lambda: True)
+    monkeypatch.setattr(embeddings, "_local_eligible", lambda: True)
+    store = SQLiteStore(db)
+    org_id, pid = store.resolve_project("p", create=True)
+    kb_id = store.resolve_kb(org_id, pid, "k", create=True)
+    [fid] = await store.insert_findings(
+        [{"kb_id": kb_id, "title": "t", "content": "c", "category": "note",
+          "confidence": 1.0, "tags": [], "provenance": [],
+          "embedding": [0.1] * 1536}]
+    )
+    assert store.embedding_space() == {
+        "provider": "remote", "model": "text-embedding-3-small", "dim": 1536
+    }
+    store.close()
+
+    # Environment #2: the key silently goes missing (shell change, not a
+    # br8n_embeddings_set call) -> auto-detection now resolves to
+    # local/384. "auto" is still what's persisted in settings throughout.
+    monkeypatch.setattr(embeddings, "_creds_present", lambda: False)
+    monkeypatch.setattr(embeddings, "_local_eligible", lambda: True)
+    store = SQLiteStore(db)
+
+    # Must DEFER, not rebuild: stamp and physical vec width unchanged, the
+    # existing vector is still present, and nothing was flagged for
+    # re-embed. Before the fix, source="settings" made this look like an
+    # explicit choice, so it rebuilt immediately and silently dropped the
+    # vector below instead.
+    assert store._declared_vec_dim() == 1536
+    assert store.embedding_space() == {
+        "provider": "remote", "model": "text-embedding-3-small", "dim": 1536
+    }
+    assert store._conn.execute(
+        "SELECT COUNT(*) AS n FROM vec_findings;"
+    ).fetchone()["n"] == 1
+    assert store._conn.execute(
+        "SELECT needs_embed FROM findings WHERE id = ?;", (fid,)
+    ).fetchone()["needs_embed"] in (None, 0)
+    store.close()

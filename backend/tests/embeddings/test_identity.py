@@ -88,11 +88,15 @@ def test_config_beats_auto_detect(monkeypatch):
 
 
 def test_stored_auto_still_auto_detects(monkeypatch):
+    """A stored literal "auto" is not an explicit choice — it means "detect
+    it" — so the provider it resolves to IS decided by auto-detection and
+    must report source="auto", not "settings". This is what the work-at-risk
+    gate in br8n.store.sqlite keys off of to decide defer-vs-rebuild."""
     _no_keys(monkeypatch)
     _local_ok(monkeypatch)
     settings_file.save_setting("embedding_provider", "auto")
     ident = embeddings.active_embedder()
-    assert (ident.provider, ident.source) == ("local", "settings")
+    assert (ident.provider, ident.source) == ("local", "auto")
 
 
 def test_explicit_remote_without_a_key_degrades_to_none(monkeypatch):
