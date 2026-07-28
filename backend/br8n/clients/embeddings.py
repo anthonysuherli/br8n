@@ -97,13 +97,25 @@ def active_embedder() -> EmbedderIdentity:
 
 
 def embeddings_configured() -> bool:
-    """True when some embedding credential is present.
+    """True when an embedding can be produced *right now*.
 
     Callers that can degrade (capture stores an unembedded finding) check this
     instead of catching an auth error, so a genuine API failure stays loud.
+    For the local provider this is False until the model is resident — the
+    first check schedules the warm-up and the existing needs_embed drain
+    backfills, so a capture never waits on a ~130 MB download.
     """
-    settings = get_settings()
-    return bool(settings.ai_gateway_api_key or settings.openai_api_key)
+    ident = active_embedder()
+    if ident.provider == "remote":
+        return True
+    if ident.provider == "local":
+        from br8n.clients import embed_local
+
+        if embed_local.ready():
+            return True
+        embed_local.warm_up()
+        return False
+    return False
 
 
 def _get_client() -> AsyncOpenAI:
@@ -123,18 +135,23 @@ def _get_client() -> AsyncOpenAI:
 
 
 async def embed_text(text: str) -> list[float]:
-    emb = get_config().embedding
-    client = _get_client()
-    resp = await client.embeddings.create(
-        model=emb.model,
-        input=text[: emb.input_char_cap],
-    )
-    return resp.data[0].embedding
+    [vec] = await embed_batch([text])
+    return vec
 
 
 async def embed_batch(texts: Sequence[str]) -> list[list[float]]:
     if not texts:
         return []
+    ident = active_embedder()
+    if ident.provider == "local":
+        from br8n.clients import embed_local
+
+        return await embed_local.embed(texts)
+    if ident.provider == "none":
+        raise RuntimeError(
+            "no embedding provider available: set AI_GATEWAY_API_KEY/OPENAI_API_KEY, "
+            "or install the local extra (pip install 'br8n[local-embeddings]')"
+        )
     emb = get_config().embedding
     client = _get_client()
     resp = await client.embeddings.create(
