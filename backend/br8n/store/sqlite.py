@@ -172,7 +172,7 @@ class SQLiteStore:
             try:
                 self._conn.execute(stmt)
                 self._conn.commit()
-            except Exception:  # noqa: BLE001 — column already present
+            except Exception:  # column already present
                 pass
 
     # --- findings — hot path -------------------------------------------------
@@ -888,7 +888,7 @@ class SQLiteStore:
                 "SELECT init_offered_at FROM kbs WHERE id = ? LIMIT 1;", (kb_id,)
             ).fetchone()
             return bool(r and r["init_offered_at"])
-        except Exception:  # noqa: BLE001 — column absent on old DB
+        except Exception:  # column absent on old DB
             return False
 
     def mark_init_offered(self, kb_id: str) -> None:
@@ -904,7 +904,7 @@ class SQLiteStore:
                 (_now_iso(), kb_id),
             )
             self._conn.commit()
-        except Exception:  # noqa: BLE001 — column may not exist yet
+        except Exception:  # column may not exist yet
             pass
 
     # --- schema-drift offer debounce -----------------------------------------
@@ -920,7 +920,7 @@ class SQLiteStore:
                 "SELECT drift_offered_count FROM kbs WHERE id = ? LIMIT 1;", (kb_id,)
             ).fetchone()
             return int(r["drift_offered_count"]) if r and r["drift_offered_count"] is not None else 0
-        except Exception:  # noqa: BLE001 — column absent on old DB
+        except Exception:  # column absent on old DB
             return 0
 
     def set_drift_marker(self, kb_id: str, count: int) -> None:
@@ -934,7 +934,7 @@ class SQLiteStore:
                 (int(count), kb_id),
             )
             self._conn.commit()
-        except Exception:  # noqa: BLE001 — column may not exist yet
+        except Exception:  # column may not exist yet
             pass
 
     # --- monitoring — best-effort --------------------------------------------

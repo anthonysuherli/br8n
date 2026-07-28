@@ -42,7 +42,7 @@ class VaultStore(SQLiteStore):
             from br8n.vault.migrate import export_missing
 
             export_missing(self)
-        except Exception:  # noqa: BLE001 — init export is best-effort
+        except Exception:  # init export is best-effort
             logger.warning("vault init export degraded", exc_info=True)
 
     # --- canonical write path -------------------------------------------------
@@ -67,7 +67,7 @@ class VaultStore(SQLiteStore):
         if path:
             try:
                 Path(path).unlink(missing_ok=True)
-            except Exception:  # noqa: BLE001 — vault IO is best-effort
+            except Exception:  # vault IO is best-effort
                 logger.warning("vault unlink failed for %s", path, exc_info=True)
         return result
 
