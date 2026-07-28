@@ -144,6 +144,13 @@ class VaultStore(SQLiteStore):
             kb_id, query_embedding, match_count, min_similarity, categories
         )
 
+    async def match_kg_nodes(self, kb_id, query_embedding, match_count,
+                             min_similarity):
+        """KG semantic read must not see empty vector table after embedding-space change."""
+        await self._re_embed_stale()
+        return await super().match_kg_nodes(kb_id, query_embedding, match_count,
+                                            min_similarity)
+
     def list_findings(self, kb_id, category=None, limit=None):
         _reconcile.reconcile(self)
         return super().list_findings(kb_id, category=category, limit=limit)

@@ -99,3 +99,38 @@ async def test_embed_failure_leaves_nodes_flagged(store, monkeypatch):
     assert store._conn.execute(
         "SELECT needs_embed FROM kg_nodes WHERE label = 'br8n';"
     ).fetchone()["needs_embed"] == 1  # retried next pass
+
+
+@pytest.mark.asyncio
+async def test_match_kg_nodes_re_embeds_stale_vectors(store, monkeypatch):
+    """KG semantic reads drain stale node vectors after embedding-space change."""
+    _fake_embeddings(monkeypatch)
+    org_id, pid = store.resolve_project("p", create=True)
+    kb_id = store.resolve_kb(org_id, pid, "k", create=True)
+    [nid] = await store.upsert_kg_nodes(
+        kb_id, [{"type": "Repo", "label": "br8n", "properties": {}, "grounded_in": []}]
+    )
+    # Simulate embedding-space change: clear vectors and flag for re-embed
+    store._conn.execute("UPDATE kg_nodes SET needs_embed = 1;")
+    store._conn.execute("DELETE FROM vec_kg_nodes;")
+    store._conn.commit()
+
+    # match_kg_nodes should re-embed before searching
+    matches = await store.match_kg_nodes(kb_id, [0.2] * 1536, 5, 0.0)
+
+    # Verify node was re-embedded
+    node_row = store._conn.execute(
+        "SELECT needs_embed FROM kg_nodes WHERE id = ?;", (nid,)
+    ).fetchone()
+    assert node_row["needs_embed"] == 0, "Node should be marked as embedded"
+
+    vec_count = store._conn.execute(
+        "SELECT COUNT(*) AS n FROM vec_kg_nodes WHERE node_id = ?;", (nid,)
+    ).fetchone()["n"]
+    assert vec_count == 1, "Node should have a vector"
+
+    # Verify the node was returned by match_kg_nodes
+    assert len(matches) == 1
+    assert matches[0]["id"] == nid
+    assert matches[0]["label"] == "br8n"
+    assert "similarity" in matches[0]
