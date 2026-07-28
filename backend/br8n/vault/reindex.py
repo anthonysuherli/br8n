@@ -3,8 +3,12 @@
 The architectural proof that brain.db is disposable. Restores findings,
 projects and KBs (each file's ``br8n_id`` survives). KG, synopsis and
 exploration rows are derivatives that repopulate through normal use.
-Semantic search needs an embedding key at reindex time; without one, text
-indexing still restores and embeddings self-heal on later reads.
+With the local extra installed, a keyless machine restores vectors too —
+reindex blocks on loading the local model before draining stale embeddings,
+rather than relying on the fire-and-forget warm-up a fresh CLI process would
+otherwise exit before finishing. Without the extra and without a remote
+embedding key, text indexing still restores and embeddings self-heal on
+later reads.
 
 CRITICAL: reindex() is user-initiated only; ignore_caps=True bypasses the
 mass-delete guard, which is exactly why this command must ONLY ever run when
@@ -23,10 +27,14 @@ async def reindex(db_path: str | None = None) -> dict:
     """Rebuild the derived index from vault files.
 
     Loops reconcile(force=True, ignore_caps=True) until a pass adopts/updates
-    nothing, then loops _re_embed_stale() until 0. Returns totals dict with
-    keys: adopted, updated, re_embedded, malformed (files skipped because
-    their frontmatter failed to parse). Closes the store in a finally block.
+    nothing. For the local provider, blocks on loading the model (a fresh CLI
+    process never has it resident, and warm-up is fire-and-forget — this
+    command must not exit before a vector is actually written). Then loops
+    _re_embed_stale() until 0. Returns totals dict with keys: adopted,
+    updated, re_embedded, malformed (files skipped because their frontmatter
+    failed to parse). Closes the store in a finally block.
     """
+    from br8n.clients.embeddings import active_embedder
     from br8n.store.vault import VaultStore
 
     store = VaultStore(db_path)
@@ -39,6 +47,13 @@ async def reindex(db_path: str | None = None) -> dict:
             totals["malformed"] += c["malformed"]
             if c["adopted"] == 0 and c["updated"] == 0:
                 break
+        if active_embedder().provider == "local":
+            # User-initiated CLI command, not the non-blocking capture path —
+            # block until the model is resident instead of racing the
+            # fire-and-forget warm-up thread.
+            from br8n.clients import embed_local
+
+            embed_local.load_now()
         while True:
             n = await store._re_embed_stale()
             totals["re_embedded"] += n
