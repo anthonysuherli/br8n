@@ -31,6 +31,12 @@ class VaultStore(SQLiteStore):
         super().__init__(db_path)
         self._last_reconcile = 0.0  # time.monotonic() of the last pass (Task 4)
         self._reconcile_cursor = ""  # carry-over across batch-capped passes
+        try:
+            from br8n.vault.migrate import export_missing
+
+            export_missing(self)
+        except Exception:  # noqa: BLE001 — init export is best-effort
+            logger.warning("vault init export degraded", exc_info=True)
 
     # --- canonical write path -------------------------------------------------
 
