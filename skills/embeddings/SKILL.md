@@ -34,9 +34,12 @@ model and *why* it was chosen (`source`), then flag anything actionable:
 
 Call `mcp__plugin_br8n_br8n__br8n_embeddings_set(provider)` with `auto`,
 `remote`, `local` or `none`. `auto` is the default and means "use a key if
-there is one, else local". This is also how a deferred `pending_switch` is
-applied — pass the `detected.provider` from Step 1 (or `auto`) once the user
-confirms.
+there is one, else local". To actually *apply* a deferred `pending_switch`,
+pass the concrete `detected.provider` from Step 1 — that always rebuilds
+immediately. Passing `auto` instead re-runs detection but is still subject to
+the same work-at-risk gate, so if the vectors it would discard are still
+there it defers again (`{ok: true, deferred: true, ...}`) rather than forcing
+the rebuild through.
 
 The change lands in `~/.br8n/settings.json` and applies to the next call — **no
 MCP server restart**. If the tool returns `ok: false`, relay `error` and, when
@@ -56,17 +59,30 @@ key just came or went) behaves differently once real vectors exist: br8n
 does **not** rebuild on its own. Discarding a corpus of vectors is not a
 decision to make silently mid-flow, so the space is left exactly as it is and
 the pending switch surfaces via `pending_switch` (Step 1) / the `--check`
-doctor line instead — this tool is what applies it once the user says go. The
-only case that still rebuilds with no confirmation is a fresh install with
-nothing to lose (an empty vector table), which is what keeps a brand-new
-keyless machine zero-interaction.
+doctor line instead. The only case that still rebuilds with no confirmation
+is a fresh install with nothing to lose (an empty vector table), which is
+what keeps a brand-new keyless machine zero-interaction.
 
-If the rebuild itself fails partway (a locked DB, a transient I/O error), the
-tool does not report success on a half-done switch: it rolls the setting back
-to whatever it was before the call, so the provider and the index stay
-consistent — never a persisted setting pointing at an index that was never
-actually rebuilt. That case also returns `ok: false`, with `fix` suggesting a
-retry or `python -m br8n.vault.reindex`.
+Calling this tool with `auto` is what applies that offer — but the same
+work-at-risk gate still governs it: if `auto` currently resolves to a
+different space than what's stored *and* real vectors are present, the tool
+**defers instead of forcing the rebuild through**. That response looks like
+`{ok: true, deferred: true, ...}`, still carries `pending_switch` (unchanged
+from Step 1 — nothing was applied), and the setting is saved as `"auto"`
+exactly as asked; nothing is rolled back. This is success, not failure — it
+means "auto" was recorded, but the space itself is still waiting on an
+explicit `remote`/`local`/`none` (or a repeat `auto` call once the vectors
+are no longer at risk, e.g. after `python -m br8n.vault.reindex`). Passing a
+**concrete** provider (`remote`/`local`/`none`) always rebuilds immediately
+when it changes the space — the gate only ever defers `auto`.
+
+If the rebuild itself genuinely fails partway (a locked DB, a transient I/O
+error — distinct from a deliberate defer), the tool does not report success
+on a half-done switch: it rolls the setting back to whatever it was before
+the call, so the provider and the index stay consistent — never a persisted
+setting pointing at an index that was never actually rebuilt. That case
+returns `{ok: false, error, fix}`, with `fix` suggesting a retry or
+`python -m br8n.vault.reindex`.
 
 Do not tell the user local embeddings match the remote model's quality. They
 are a good keyless fallback; a configured key is still the better path.

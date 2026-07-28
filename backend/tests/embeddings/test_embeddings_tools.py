@@ -129,6 +129,56 @@ def test_set_auto_returns_to_detection(monkeypatch):
     assert server._embeddings_get_impl()["provider"] == "remote"
 
 
+async def test_set_auto_defers_and_keeps_setting_when_vectors_would_be_discarded(
+    monkeypatch,
+):
+    """A deferred switch (Change B's work-at-risk gate) is success, not
+    failure. The old "landed?" check could not tell "the rebuild was
+    deferred on purpose" from "the rebuild genuinely failed" — both leave
+    the stamp untouched — so it reverted the persisted setting and reported
+    ok:False for a deliberate, harmless deferral, discarding the user's
+    explicit "auto" choice. The setting must stay exactly as asked, nothing
+    rolls back, and the response must surface the pending switch so the
+    caller can see what didn't change and why."""
+    monkeypatch.setattr("br8n.clients.embeddings._creds_present", lambda: True)
+
+    from br8n.store import get_store
+
+    store = get_store()
+    org_id, pid = store.resolve_project("p", create=True)
+    kb_id = store.resolve_kb(org_id, pid, "k", create=True)
+    await store.insert_findings(
+        [{"kb_id": kb_id, "title": "t", "content": "c", "category": "note",
+          "confidence": 1.0, "tags": [], "provenance": [],
+          "embedding": [0.1] * 1536}]
+    )
+    assert store.embedding_space() == {
+        "provider": "remote", "model": "text-embedding-3-small", "dim": 1536
+    }
+
+    # Environment-driven change: the key silently goes missing, and the
+    # user explicitly asks to go (back) to auto mode.
+    monkeypatch.setattr("br8n.clients.embeddings._creds_present", lambda: False)
+    monkeypatch.setattr("br8n.clients.embed_local.installed", lambda: True)
+
+    out = server._embeddings_set_impl("auto")
+
+    assert out["ok"] is True
+    assert "error" not in out
+    assert settings_file.load_settings()["embedding_provider"] == "auto"
+    # Nothing discarded: space and vector untouched, nothing flagged.
+    assert store.embedding_space() == {
+        "provider": "remote", "model": "text-embedding-3-small", "dim": 1536
+    }
+    assert store._conn.execute(
+        "SELECT COUNT(*) AS n FROM vec_findings;"
+    ).fetchone()["n"] == 1
+    assert out["pending_switch"] == {
+        "stored": {"provider": "remote", "model": "text-embedding-3-small", "dim": 1536},
+        "detected": {"provider": "local", "model": "BAAI/bge-small-en-v1.5", "dim": 384},
+    }
+
+
 async def test_set_local_resyncs_the_live_store_and_prevents_dimension_mismatch(
     monkeypatch,
 ):

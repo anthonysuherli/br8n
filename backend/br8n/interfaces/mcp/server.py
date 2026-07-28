@@ -776,6 +776,28 @@ def _embeddings_set_impl(provider: str) -> dict:
             and space["model"] == ident.model
         )
         if not landed:
+            # NOT landing is ambiguous by itself: a deliberate defer (Change
+            # B's work-at-risk gate kept the existing space on purpose,
+            # because applying `ident` would discard real vectors) and a
+            # genuine failure (a locked DB / transient I/O error mid-rebuild)
+            # both leave the stamp exactly where it was. Ask the store which
+            # one happened — pending_embedding_switch() is the same
+            # predicate the gate itself used, so this can never disagree
+            # with it — rather than guessing from the stamp.
+            pending = store.pending_embedding_switch()
+            if pending is not None:
+                # Deferred, not failed: this IS what the user asked for
+                # ("auto" — detect it) applied correctly. The gate just
+                # declined to discard existing vectors to do it, and that
+                # decision is not this call's to override. The setting
+                # stays exactly as requested; nothing is rolled back.
+                state = _embeddings_get_impl()
+                return {
+                    "ok": True,
+                    "deferred": True,
+                    **state,
+                    "queued_rebuild": state["pending_findings"] + state["pending_nodes"],
+                }
             save_setting("embedding_provider", previous)  # exact revert, not "auto"
             return {
                 "ok": False,
@@ -790,6 +812,7 @@ def _embeddings_set_impl(provider: str) -> dict:
         embed_local.warm_up()
     return {
         "ok": True,
+        "deferred": False,
         **state,
         "queued_rebuild": state["pending_findings"] + state["pending_nodes"],
     }
@@ -814,16 +837,26 @@ def br8n_embeddings_set(provider: str) -> dict:
     """Set the embedding provider — "auto" | "remote" | "local" | "none" —
     persisting to ~/.br8n/settings.json so it applies without restarting the
     MCP server. Refuses "local" when the extra is missing (returns the pip
-    command in `fix`) or on the cloud tier. On success, resyncs the live
-    store in place (resizes vec_findings/vec_kg_nodes and flags existing
-    rows needs_embed=1 when the provider actually changed dim) and returns
-    {ok: True, ...state, queued_rebuild} where queued_rebuild is how many
-    rows were just flagged and will re-embed in the background. If the
-    resync itself fails (e.g. a locked DB during the rebuild DDL), the
-    switch is rolled back — the persisted setting reverts to its prior
-    value and this returns {ok: False, error, fix} instead of a false
-    success; `fix` names a retry or `python -m br8n.vault.reindex`. Used by
-    /br8n:embeddings."""
+    command in `fix`) or on the cloud tier. Otherwise resyncs the live store
+    in place and returns one of three outcomes:
+
+    - Applied {ok: True, deferred: False, ...state, queued_rebuild}: the
+      vec tables were resized and existing rows flagged needs_embed=1 when
+      the provider actually changed dim; queued_rebuild is how many rows
+      were just flagged and will re-embed in the background.
+    - Deferred {ok: True, deferred: True, ...state, queued_rebuild: 0}: the
+      request (typically "auto" after an environment change, e.g. a key
+      going missing) would have discarded existing vectors, so the
+      work-at-risk gate left the space exactly as it was instead of
+      rebuilding — this is success, not failure, and the setting is NOT
+      rolled back; `state["pending_switch"]` names the stored space, the
+      detected space, and that calling this tool again is what applies it.
+    - Failed {ok: False, error, fix}: the resync genuinely failed (e.g. a
+      locked DB during the rebuild DDL) — the persisted setting is rolled
+      back to its prior value; `fix` names a retry or
+      `python -m br8n.vault.reindex`.
+
+    Used by /br8n:embeddings."""
     return _embeddings_set_impl(provider)
 
 
