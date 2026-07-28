@@ -14,6 +14,7 @@ a user explicitly invokes it. Do NOT wire reindex into any automatic path
 from __future__ import annotations
 
 import asyncio
+import sys
 
 from br8n.vault import reconcile as _reconcile
 
@@ -23,17 +24,19 @@ async def reindex(db_path: str | None = None) -> dict:
 
     Loops reconcile(force=True, ignore_caps=True) until a pass adopts/updates
     nothing, then loops _re_embed_stale() until 0. Returns totals dict with
-    keys: adopted, updated, re_embedded. Closes the store in a finally block.
+    keys: adopted, updated, re_embedded, malformed (files skipped because
+    their frontmatter failed to parse). Closes the store in a finally block.
     """
     from br8n.store.vault import VaultStore
 
     store = VaultStore(db_path)
     try:
-        totals = {"adopted": 0, "updated": 0, "re_embedded": 0}
+        totals = {"adopted": 0, "updated": 0, "re_embedded": 0, "malformed": 0}
         while True:
             c = _reconcile.reconcile(store, force=True, ignore_caps=True)
             totals["adopted"] += c["adopted"]
             totals["updated"] += c["updated"]
+            totals["malformed"] += c["malformed"]
             if c["adopted"] == 0 and c["updated"] == 0:
                 break
         while True:
@@ -51,8 +54,14 @@ def main() -> None:
     totals = asyncio.run(reindex())
     print(
         f"reindex: adopted={totals['adopted']} updated={totals['updated']} "
-        f"re_embedded={totals['re_embedded']}"
+        f"re_embedded={totals['re_embedded']} malformed={totals['malformed']}"
     )
+    if totals["malformed"]:
+        print(
+            f"note: {totals['malformed']} malformed file(s) skipped — fix "
+            "their frontmatter and re-run",
+            file=sys.stderr,
+        )
 
 
 if __name__ == "__main__":
