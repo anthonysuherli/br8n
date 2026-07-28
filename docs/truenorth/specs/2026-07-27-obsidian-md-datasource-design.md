@@ -83,6 +83,7 @@ Properties/Bases/Dataview-compatible with zero plugin configuration:
 ---
 br8n_id: <uuid>            # immutable DB↔file join key; written by the engine
 type: snapshot|note|journal|finding
+title: "…"                 # round-trips the row title (body H1 is display-only)
 project: br8n
 kb: main
 created: 2026-07-27T14:30:00Z   # ISO-8601, date-typed in Obsidian
