@@ -191,7 +191,7 @@ def load_settings() -> dict:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             data = {}
-    except Exception:  # noqa: BLE001 — a hand-broken settings file is not fatal
+    except Exception:  # a hand-broken settings file is not fatal
         logger.warning("settings.json unreadable; ignoring it", exc_info=True)
         data = {}
     _cache = (mtime, data)
@@ -450,7 +450,7 @@ def _local_eligible() -> bool:
         from br8n.store import active_backend
 
         return active_backend() == "local" and embed_local.installed()
-    except Exception:  # noqa: BLE001 — never let detection raise
+    except Exception:  # never let detection raise
         return False
 
 
@@ -702,7 +702,7 @@ def installed() -> bool:
 
     try:
         return find_spec("fastembed") is not None
-    except Exception:  # noqa: BLE001 — a broken import path is "not installed"
+    except Exception:  # a broken import path is "not installed"
         return False
 
 
@@ -727,7 +727,7 @@ def load_now() -> bool:
         cfg = get_config().embedding
         try:
             from fastembed import TextEmbedding
-        except Exception:  # noqa: BLE001 — extra absent or broken
+        except Exception:  # extra absent or broken
             logger.warning("fastembed unavailable; local embeddings off", exc_info=True)
             return False
         base = {"model_name": cfg.local_model, "threads": cfg.local_threads}
@@ -738,7 +738,7 @@ def load_now() -> bool:
             except TypeError:
                 # Older fastembed without local_files_only — fall through to base.
                 continue
-            except Exception:  # noqa: BLE001 — cache miss: retry with download
+            except Exception:  # cache miss: retry with download
                 logger.info("local model not cached; fetching", exc_info=True)
                 continue
         logger.warning("local embedding model failed to load")
@@ -1080,7 +1080,7 @@ And add the methods:
             r = self._conn.execute(
                 "SELECT provider, model, dim FROM embedding_space WHERE id = 1;"
             ).fetchone()
-        except Exception:  # noqa: BLE001 — table absent on a partial schema
+        except Exception:  # table absent on a partial schema
             return None
         if r is None:
             return None
@@ -1134,7 +1134,7 @@ And add the methods:
             self._conn.executescript(_vec_schema(fallback))
             self._conn.executescript(_EMBEDDING_SPACE_SCHEMA)
             self._conn.commit()
-        except Exception:  # noqa: BLE001 — a store must still open
+        except Exception:  # a store must still open
             logger.warning("vec/embedding_space schema degraded", exc_info=True)
             return
 
@@ -1169,11 +1169,11 @@ And add the methods:
                 )
                 self._rebuild_vec_tables(ident.dim)
                 self._stamp_embedding_space(ident.provider, ident.model, ident.dim)
-        except Exception:  # noqa: BLE001 — identity problems never break a store
+        except Exception:  # identity problems never break a store
             logger.warning("embedding-space sync degraded", exc_info=True)
             try:
                 self._conn.rollback()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
 ```
 
@@ -1392,10 +1392,10 @@ duplicating the claim/embed/swap block:
                 )
             self._conn.commit()
             return len(rows)
-        except Exception:  # noqa: BLE001 — embedding failures never break search
+        except Exception:  # embedding failures never break search
             try:
                 self._conn.rollback()  # never leave a write transaction open
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
             logger.warning("re-embed pass degraded (%s)", table, exc_info=True)
             return 0
@@ -1562,7 +1562,7 @@ def _pending_counts() -> tuple[int, int]:
             "SELECT COUNT(*) AS n FROM kg_nodes WHERE needs_embed = 1;"
         ).fetchone()["n"]
         return int(f), int(n)
-    except Exception:  # noqa: BLE001 — reporting must not raise
+    except Exception:  # reporting must not raise
         return 0, 0
 
 
@@ -1854,7 +1854,7 @@ Read `check()` in `backend/br8n/api/main.py` first — it uses `line(status, lab
                 if pending:
                     detail += f", {pending} pending re-embed"
                 line("ok" if not pending else "warn", "embeddings", detail)
-        except Exception as exc:  # noqa: BLE001 — reporting never fails the doctor
+        except Exception as exc:  # reporting never fails the doctor
             line("warn", "embeddings", f"unavailable: {exc}")
 ```
 

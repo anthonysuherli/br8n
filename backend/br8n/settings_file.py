@@ -54,7 +54,7 @@ def load_settings() -> dict:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             data = {}
-    except Exception:  # noqa: BLE001 — a hand-broken settings file is not fatal
+    except Exception:  # a hand-broken settings file is not fatal
         logger.warning("settings.json unreadable; ignoring it", exc_info=True)
         data = {}
     _cache = (mtime, data)
