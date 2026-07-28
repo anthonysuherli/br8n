@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import uuid
 from pathlib import Path
 
 import yaml
@@ -51,11 +52,20 @@ def content_hash(text: str) -> str:
 
 
 def atomic_write(path: Path, text: str) -> str:
-    """Write via tmp + rename; return the content hash of what was written."""
+    """Write via tmp + rename; return the content hash of what was written.
+
+    The tmp name embeds a uuid so concurrent writers to the same path never
+    share a tmp file (a fixed name let one writer replace with another's
+    bytes); a failed write unlinks its own tmp rather than orphaning it.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    tmp = path.parent / f"{path.name}.{uuid.uuid4().hex[:8]}.tmp"
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     return content_hash(text)
 
 

@@ -1,7 +1,42 @@
 """Frontmatter round-trip, atomic writes, hashing."""
+import os
+
 import pytest
 
 from br8n.vault import files
+
+
+def test_atomic_write_tmp_names_are_unique(tmp_path, monkeypatch):
+    """Concurrent writers to the same path must never share a tmp file —
+    a fixed '<name>.tmp' let one writer replace with another's bytes."""
+    target = tmp_path / "same.md"
+    seen = []
+    real_replace = os.replace
+
+    def spy(src, dst):
+        seen.append(str(src))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(files.os, "replace", spy)
+    files.atomic_write(target, "first")
+    files.atomic_write(target, "second")
+
+    assert len(seen) == 2
+    assert len(set(seen)) == 2  # distinct tmp names per call
+    assert target.read_text() == "second"
+    assert list(tmp_path.glob("*.tmp")) == []  # nothing left behind
+
+
+def test_atomic_write_cleans_tmp_on_failure(tmp_path, monkeypatch):
+    target = tmp_path / "same.md"
+
+    def boom(src, dst):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(files.os, "replace", boom)
+    with pytest.raises(OSError):
+        files.atomic_write(target, "text")
+    assert list(tmp_path.glob("*.tmp")) == []  # unique tmp junk not orphaned
 
 
 def test_serialize_parse_round_trip():
