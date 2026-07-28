@@ -38,8 +38,16 @@ def vault_root() -> Path:
 
 
 def safe_segment(segment: str) -> str:
-    """Filesystem-safe single path segment (branch names contain '/')."""
-    return re.sub(r"[^A-Za-z0-9._-]+", "__", segment.strip()) or "default"
+    """Filesystem-safe single path segment (branch names contain '/').
+
+    Dots are allowed (for extensions/versioned names) but a segment that is
+    ENTIRELY dots — "." or ".." or "..." — collapses to a dot-path traversal
+    once written under the vault root, so it is rejected and replaced.
+    """
+    s = re.sub(r"[^A-Za-z0-9._-]+", "__", segment.strip()) or "default"
+    if s.strip(".") == "":
+        return "default"
+    return s
 
 
 def slug(text: str, cap: int = 48) -> str:

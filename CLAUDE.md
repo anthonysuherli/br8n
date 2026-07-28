@@ -216,7 +216,7 @@ python -m br8n.interfaces.mcp.server          # add to .claude/settings.json
   seam) — **removed** (not the right surface for now; the Claude Code plugin + iOS
   app are the active surfaces). The backend HTML resume card (`api/resume.py`) stays.
 - [x] Phase 3 — Always-open explore seam (gap-band → explore pipeline → auto-refresh card)
-- [x] Storage tiers — `Store` protocol + `SQLiteStore`/`SupabaseStore`, `get_store()`/
+- [x] Storage tiers — `Store` protocol + `VaultStore`/`SupabaseStore`, `get_store()`/
   `active_backend()` selection, free-tier local entry points (no-auth loopback API +
   local MCP). Paid value props (sync/cross-repo/managed-keys/teams) remain future.
 - [x] Activity KG — per-user, cross-repo work graph that auto-populates on every

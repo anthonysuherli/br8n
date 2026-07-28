@@ -71,6 +71,29 @@ async def test_match_findings_re_embeds_stale(store, monkeypatch):
     assert flag == 0
 
 
+def test_list_projects_triggers_reconcile_and_sees_adopted_file(store, tmp_path):
+    """A hand-created snapshot file under notes/<project>/<branch>/ is adopted
+    by reconcile, so the new project shows up in list_projects without an
+    explicit reconcile call first."""
+    from br8n.vault import layout
+
+    path = layout.vault_root() / "snapshots" / "newproj" / "main" / "2026-07-27-1200-hand-abcd1234.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = vfiles.serialize(
+        {"br8n_id": "handid1", "type": "snapshot", "title": "Hand", "project": "newproj",
+         "kb": "main", "created": "2026-07-27T12:00:00+00:00", "source": "human"},
+        "hand-written snapshot",
+    )
+    path.write_text(text, encoding="utf-8")
+
+    projects = store.list_projects()
+    names = {p["project"] for p in projects}
+    assert "newproj" in names
+    newproj = next(p for p in projects if p["project"] == "newproj")
+    kb = next(k for k in newproj["kbs"] if k["kb"] == "main")
+    assert kb["snapshot_count"] == 1
+
+
 def test_get_store_returns_vaultstore_locally(monkeypatch, tmp_path):
     monkeypatch.setenv("BR8N_BACKEND", "local")
     monkeypatch.setenv("BR8N_DB_PATH", str(tmp_path / "brain.db"))

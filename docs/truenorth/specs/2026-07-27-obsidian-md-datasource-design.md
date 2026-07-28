@@ -153,8 +153,11 @@ One-time, idempotent `vault init` (also triggered by first VaultStore boot):
 
 - Existing `brain.db` findings export to canonical files (currently 7
   snapshots — trivial volume).
-- Existing `.br8n/notes/**/*.md` and `~/.br8n/journal/*.md` are copied into
-  the vault with frontmatter added; originals left untouched.
+- Legacy `.br8n/notes/**/*.md` and `~/.br8n/journal/*.md` files are left in
+  place, not copied into the vault: their content already exists as findings
+  rows (notes/journal were always dual-written), so the `brain.db` export
+  above covers them. A legacy file hand-edited after its dual-write diverges
+  from its row and is deliberately not migrated.
 - Index schema migration adds `content_hash`/`vault_path` columns
   (`CREATE TABLE IF NOT EXISTS` / additive `ALTER`, same pattern as today).
 

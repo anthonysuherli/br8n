@@ -22,6 +22,20 @@ def test_safe_segment_and_slug():
     assert layout.slug("") == "untitled"
 
 
+def test_safe_segment_rejects_dot_segments():
+    assert layout.safe_segment("..") == "default"
+    assert layout.safe_segment(".") == "default"
+    assert layout.safe_segment("...") == "default"
+
+
+def test_file_path_rejects_dot_segment_traversal(monkeypatch, tmp_path):
+    monkeypatch.setenv("BR8N_VAULT_PATH", str(tmp_path))
+    p = layout.file_path(
+        "note", "..", "..", "2026-07-27T14:30:00+00:00", "Escape", "abcd1234ef"
+    )
+    assert tmp_path.resolve() in p.resolve().parents
+
+
 def test_category_mapping():
     assert layout.category_dir("snapshot") == "snapshots"
     assert layout.category_dir("note") == "notes"

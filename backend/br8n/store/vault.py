@@ -145,6 +145,10 @@ class VaultStore(SQLiteStore):
         _reconcile.reconcile(self)
         return super().count_findings(kb_id)
 
+    def list_projects(self):
+        _reconcile.reconcile(self)
+        return super().list_projects()
+
     def get_finding(self, kb_id, finding_id):
         self._verify_one(finding_id)
         return super().get_finding(kb_id, finding_id)

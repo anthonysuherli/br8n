@@ -234,6 +234,18 @@ def _apply_edit(store, path: Path, row: dict) -> bool:
         )
         return False
     fm, body = files.parse(text)  # ValueError → counted as malformed by caller
+
+    # br8n_id self-heal: an edit that stripped (or mismatched) the join key
+    # must not silently orphan the file for future renames — write the row's
+    # id back and restamp hash/mtime/size from what actually landed on disk,
+    # so this healed text isn't immediately re-suspected next pass.
+    if fm.get("br8n_id") != row["id"]:
+        fm["br8n_id"] = row["id"]
+        text = files.serialize(fm, body)
+        files.atomic_write(path, text)
+        h = files.content_hash(text)
+        st = path.stat()
+
     title = str(fm.get("title") or files.title_from_body(body, path.stem))
     # M4: tags must be clearable from Obsidian — always write the parsed
     # result, never keep stale tags. Scalar/comma-string tags coerce to a
@@ -326,8 +338,11 @@ def _adopt(store, path: Path) -> bool:
     else:
         meta.pop("next_action", None)
 
-    if source == "human" and (not fm.get("br8n_id") or fm.get("source") is None):
-        # write the join key (and source) back so the file self-identifies
+    if not fm.get("br8n_id"):
+        # write the join key (and source) back so the file self-identifies —
+        # unconditional: ANY adopted file lacking br8n_id gets it written
+        # back, regardless of declared source (a hand file declaring
+        # `source: agent` must not lose its identity on rename either).
         fm.update({"br8n_id": fid, "source": source})
         text = files.serialize(fm, body)
         files.atomic_write(path, text)

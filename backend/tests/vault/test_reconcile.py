@@ -437,6 +437,69 @@ async def test_comma_string_tags_coerced_to_list_on_adopt(store):
     assert row["tags"] == ["bug", "feature"]
 
 
+# --- br8n_id self-identification hardening ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_edit_stripping_br8n_id_heals_frontmatter(store):
+    """An edit that strips br8n_id from frontmatter must not orphan the file:
+    reconcile writes the row's id back so a future rename can still match it."""
+    kb_id = _mk_kb(store)
+    fid = await _insert(store, kb_id)
+    path = store.vault_path_for(fid)
+    text = open(path, encoding="utf-8").read()
+    fm, _ = vfiles.parse(text)
+    fm.pop("br8n_id", None)
+    fm["title"] = "Edited title"
+    open(path, "w", encoding="utf-8").write(vfiles.serialize(fm, "# Edited title\n\nnew body"))
+
+    counters = reconcile.reconcile(store, force=True)
+    assert counters["updated"] == 1
+
+    row = store.get_finding(kb_id, fid)
+    assert row["title"] == "Edited title"
+    assert "new body" in row["content"]
+
+    healed_fm, _ = vfiles.parse(Path(path).read_text(encoding="utf-8"))
+    assert healed_fm["br8n_id"] == fid
+
+    # the row's stamps must match what was actually written (healed text),
+    # not the pre-heal edit, else the next pass immediately re-suspects it.
+    st = Path(path).stat()
+    stamped = store._conn.execute(
+        "SELECT content_hash, vault_mtime, vault_size FROM findings WHERE id = ?;", (fid,)
+    ).fetchone()
+    assert stamped["content_hash"] == vfiles.content_hash(Path(path).read_text(encoding="utf-8"))
+    assert stamped["vault_mtime"] == st.st_mtime
+    assert stamped["vault_size"] == st.st_size
+
+    counters2 = reconcile.reconcile(store, force=True)
+    assert counters2["updated"] == 0  # healed — no longer a suspect
+
+
+@pytest.mark.asyncio
+async def test_adopt_writes_id_back_for_agent_sourced_file(store):
+    """A hand-created file declaring source: agent (not 'human') must still
+    get its br8n_id written back on adoption — id write-back is unconditional."""
+    kb_id = _mk_kb(store)
+    d = layout.vault_root() / "notes" / "br8n" / "main"
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / "2026-07-27-1500-agent-sourced.md"
+    path.write_text(
+        "---\nsource: agent\n---\n\n# Agent sourced\n\nbody\n", encoding="utf-8"
+    )
+
+    counters = reconcile.reconcile(store, force=True)
+    assert counters["adopted"] == 1
+
+    fm, _ = vfiles.parse(path.read_text(encoding="utf-8"))
+    assert fm.get("br8n_id")
+    assert fm["source"] == "agent"
+
+    listed = store.list_findings(kb_id, category="note")
+    assert any(f["id"] == fm["br8n_id"] for f in listed["findings"])
+
+
 # --- Minor: an mtime-only touch restamps without a spurious update ---------
 
 
