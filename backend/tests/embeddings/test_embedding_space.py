@@ -258,3 +258,109 @@ async def test_auto_rebuild_logs_warning_with_spaces_and_queued_count(db, monkey
     assert "text-embedding-3-small" in msg  # old space named
     assert "BAAI/bge-small-en-v1.5" in msg  # new space named
     assert "1" in msg  # 1 row queued for re-embed
+
+
+@pytest.mark.asyncio
+async def test_clean_install_auto_rebuild_no_warning(db, monkeypatch, caplog):
+    """I1: Fresh empty DB with auto-resolved local identity must NOT emit a
+    WARNING, even though a rebuild happens. The auto-rebuild WARNING exists to
+    announce silent corpus drops (remote key lost -> flip to local 384), not to
+    cry wolf on clean installs where n_queued = 0."""
+    caplog.set_level(logging.DEBUG, logger="br8n.store.sqlite")
+    # Open fresh DB: with local/384 auto-resolved identity, the DB initializes
+    # at config.embedding.dim (1536), sees 1536 != 384, and rebuilds to 384.
+    # On an empty DB, n_queued = 0 — so INFO, not WARNING.
+    store = _store(db, monkeypatch, _ident("local", "BAAI/bge-small-en-v1.5", 384))
+
+    # Verify no WARNING was emitted
+    warnings = [
+        r for r in caplog.records
+        if r.levelname == "WARNING" and "embedding space" in r.getMessage()
+    ]
+    assert len(warnings) == 0, (
+        f"Expected no WARNING, got: {[r.getMessage() for r in warnings]}"
+    )
+
+    # Verify rebuild and stamp still happened (the most important part)
+    assert store._declared_vec_dim() == 384
+    assert store.embedding_space()["dim"] == 384
+    assert store.embedding_space()["model"] == "BAAI/bge-small-en-v1.5"
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_rebuild_with_data_logs_warning(db, monkeypatch, caplog):
+    """I1: When a rebuild actually discards work (n_queued > 0) and the provider
+    was auto-detected, emit a WARNING. This test inserts data under remote/1536,
+    then switches to local/384, confirming the WARNING fires with the queued count."""
+    # Create DB with one finding under remote/1536
+    store = _store(db, monkeypatch, _ident())  # remote, auto-detected
+    org_id, pid = store.resolve_project("p", create=True)
+    kb_id = store.resolve_kb(org_id, pid, "k", create=True)
+    [fid] = await store.insert_findings(
+        [{"kb_id": kb_id, "title": "t", "content": "c", "category": "note",
+          "confidence": 1.0, "tags": [], "provenance": [],
+          "embedding": [0.1] * 1536}]
+    )
+    store.close()
+
+    # Reopen with local/384 (auto-detected), triggering rebuild with n_queued = 1
+    caplog.set_level(logging.DEBUG, logger="br8n.store.sqlite")
+    store = _store(db, monkeypatch, _ident("local", "BAAI/bge-small-en-v1.5", 384))
+
+    # Verify WARNING was emitted with the queued count
+    warnings = [
+        r for r in caplog.records
+        if r.levelname == "WARNING" and "embedding space" in r.getMessage()
+    ]
+    assert len(warnings) > 0, (
+        f"Expected at least one WARNING, got {len(warnings)}"
+    )
+    msg = warnings[0].getMessage()
+    assert "text-embedding-3-small" in msg  # old space named
+    assert "BAAI/bge-small-en-v1.5" in msg  # new space named
+    assert "1" in msg or "row" in msg  # queued count
+
+    # Verify rebuild and stamp happened
+    assert store._declared_vec_dim() == 384
+    assert store.embedding_space()["dim"] == 384
+    store.close()
+
+
+def test_unparseable_vec_table_logs_warning_before_returning(db, monkeypatch, caplog):
+    """M2: When vec_findings exists but its DDL is unparseable (can't extract
+    width), log a WARNING explaining the dead end before returning without
+    stamping or rebuilding."""
+    store = _store(db, monkeypatch, _ident("local", "BAAI/bge-small-en-v1.5", 384))
+    store.close()
+
+    # Corrupt: drop the stamp and replace vec_findings with unparseable table
+    conn = _raw_connect(db)
+    conn.execute("DELETE FROM embedding_space;")
+    conn.execute("DROP TABLE vec_findings;")
+    conn.execute("CREATE TABLE vec_findings (finding_id TEXT, embedding BLOB);")
+    conn.commit()
+    conn.close()
+
+    # Reopen and verify warning is logged
+    caplog.set_level(logging.WARNING, logger="br8n.store.sqlite")
+    store = _store(db, monkeypatch, _ident("local", "BAAI/bge-small-en-v1.5", 384))
+
+    # Verify WARNING was emitted about unparseable DDL
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    msg = " ".join(r.getMessage() for r in warnings)
+    assert "unparseable" in msg.lower() or "cannot determine" in msg.lower(), \
+        f"Expected unparseable DDL warning, got: {msg}"
+
+    # Verify the space was NOT stamped (left alone)
+    assert store.embedding_space() is None
+
+    # Verify both vec tables still exist (no corruption, just left as-is)
+    assert store._conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='vec_findings';"
+    ).fetchone() is not None
+    assert store._conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='vec_kg_nodes';"
+    ).fetchone() is not None
+
+    store.close()

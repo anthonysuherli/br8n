@@ -334,6 +334,10 @@ class SQLiteStore:
                     # guess — leave the existing (unknown-width) space alone
                     # rather than stamping the active identity blindly over
                     # vectors that might be a different width entirely.
+                    logger.warning(
+                        "vec_findings table exists but DDL is unparseable; "
+                        "skipping embedding-space sync to avoid silent vector drop"
+                    )
                     return
                 if declared is not None and declared != ident.dim:
                     # Pre-feature DB whose width disagrees with the active
@@ -347,21 +351,31 @@ class SQLiteStore:
                     return
 
             if stored["dim"] != ident.dim or stored["model"] != ident.model:
+                # Log intent before the rebuild (M4: diagnose if rebuild fails)
+                logger.info(
+                    "embedding space change (%s/%sd -> %s/%sd)%s; rebuilding "
+                    "index",
+                    stored["model"] or stored["provider"], stored["dim"],
+                    ident.model, ident.dim,
+                    " [provider auto-detected, not explicitly configured]"
+                    if ident.source == "auto" else "",
+                )
                 self._rebuild_vec_tables(ident.dim)
                 self._stamp_embedding_space(ident.provider, ident.model, ident.dim)
                 n_queued = self._conn.execute(
                     "SELECT (SELECT COUNT(*) FROM findings WHERE needs_embed = 1) + "
                     "(SELECT COUNT(*) FROM kg_nodes WHERE needs_embed = 1) AS n;"
                 ).fetchone()["n"]
-                # WARNING (not INFO) when the provider was auto-detected: with
-                # the local extra installed, opening the store from a shell
+                # WARNING (not INFO) only when work was actually discarded
+                # (I1: gate on n_queued > 0 to avoid false alarms on clean DBs).
+                # With the local extra installed, opening the store from a shell
                 # that happens not to export AI_GATEWAY_API_KEY silently flips
                 # remote/1536 -> local/384 and drops every vector; on a remote
                 # provider that's a paid re-embed of the whole corpus.
-                log = logger.warning if ident.source == "auto" else logger.info
+                log = logger.warning if (ident.source == "auto" and n_queued > 0) else logger.info
                 log(
-                    "embedding space change (%s/%sd -> %s/%sd)%s; rebuilding "
-                    "index, %d row(s) queued for re-embed",
+                    "embedding space change (%s/%sd -> %s/%sd)%s; %d row(s) "
+                    "queued for re-embed",
                     stored["model"] or stored["provider"], stored["dim"],
                     ident.model, ident.dim,
                     " [provider auto-detected, not explicitly configured]"
