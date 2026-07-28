@@ -311,6 +311,15 @@ class MonitoringConfig(BaseModel):
     retention_days: int = 90
 
 
+class VaultConfig(BaseModel):
+    """Vault reconcile knobs — local tier only (see the VaultStore spec)."""
+
+    reconcile_debounce_seconds: float = 20.0  # min gap between reconcile passes
+    reconcile_time_cap_ms: int = 200          # scan budget per pass
+    reconcile_batch_cap: int = 200            # max suspect files processed per pass
+    re_embed_batch: int = 32                  # stale rows re-embedded per async read
+
+
 class AppConfig(BaseModel):
     agent: AgentConfig = Field(default_factory=AgentConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
@@ -326,6 +335,7 @@ class AppConfig(BaseModel):
     chat: ChatConfig = Field(default_factory=ChatConfig)
     public_api: PublicApiConfig = Field(default_factory=PublicApiConfig)
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
+    vault: VaultConfig = Field(default_factory=VaultConfig)
 
 
 _ENV_PREFIX = "B2_"
