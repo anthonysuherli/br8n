@@ -1,6 +1,7 @@
 """Local provider: readiness gating, warm-up, threading, façade routing."""
 import asyncio
 import sys
+import threading
 import time
 import types
 
@@ -222,38 +223,81 @@ def test_configured_does_not_block_on_an_in_flight_load(fake_fastembed, monkeypa
     assert embed_local.ready() is True
 
 
-def test_warm_up_stops_after_max_consecutive_failures(monkeypatch):
-    """I3: don't respawn a doomed load forever — give up after 3 in a row."""
-    embed_local.reset()
-    monkeypatch.setattr(embed_local, "installed", lambda: True)
-    monkeypatch.setattr(embeddings, "_creds_present", lambda: False)
-    settings_file.save_setting("embedding_provider", "local")
+def test_warm_up_never_raises_on_thread_start_failure(monkeypatch):
+    """M2: warm_up() must never raise, even if Thread.start() exhausts the pool."""
+    try:
+        embed_local.reset()
+        monkeypatch.setattr(embed_local, "installed", lambda: True)
+        monkeypatch.setattr(embeddings, "_creds_present", lambda: False)
+        settings_file.save_setting("embedding_provider", "local")
 
-    calls = {"n": 0}
+        # Track how many times start() is called (should stop after max attempts).
+        start_call_count = {"n": 0}
 
-    def failing_load():
-        calls["n"] += 1
-        return False
+        def failing_start(self):
+            start_call_count["n"] += 1
+            raise RuntimeError("can't start new thread")
 
-    monkeypatch.setattr(embed_local, "load_now", failing_load)
+        monkeypatch.setattr(threading.Thread, "start", failing_start)
 
-    for _ in range(5):
-        assert embeddings.embeddings_configured() is False
+        # Call embeddings_configured() multiple times; it should never raise
+        # even though Thread.start() fails every time.
+        for _ in range(5):
+            result = embeddings.embeddings_configured()
+            assert result is False, "should return False, not raise"
+
+        # Wait for any in-flight attempts to finish.
         embed_local.wait_for_warm_up(timeout=5)
 
-    assert 1 <= calls["n"] <= 3, f"expected at most 3 load attempts, got {calls['n']}"
-    embed_local.reset()
+        # Verify the model is still not resident.
+        assert embed_local.ready() is False
+
+        # Verify scheduling stopped after hitting the max-attempts bound (3).
+        # Each call to embeddings_configured() may schedule a warm-up attempt,
+        # but after 3 failures, it should stop scheduling.
+        assert start_call_count["n"] <= 3, (
+            f"expected at most 3 thread start attempts, got {start_call_count['n']}"
+        )
+    finally:
+        embed_local.reset()
+
+
+def test_warm_up_stops_after_max_consecutive_failures(monkeypatch):
+    """I3: don't respawn a doomed load forever — give up after 3 in a row."""
+    try:
+        embed_local.reset()
+        monkeypatch.setattr(embed_local, "installed", lambda: True)
+        monkeypatch.setattr(embeddings, "_creds_present", lambda: False)
+        settings_file.save_setting("embedding_provider", "local")
+
+        calls = {"n": 0}
+
+        def failing_load():
+            calls["n"] += 1
+            return False
+
+        monkeypatch.setattr(embed_local, "load_now", failing_load)
+
+        for _ in range(5):
+            assert embeddings.embeddings_configured() is False
+            embed_local.wait_for_warm_up(timeout=5)
+
+        assert 1 <= calls["n"] <= 3, f"expected at most 3 load attempts, got {calls['n']}"
+    finally:
+        embed_local.reset()
 
 
 @pytest.mark.asyncio
 async def test_embed_raises_on_width_mismatch(monkeypatch):
     """A model returning the wrong width must never reach the fixed-width
     vector table — fail loudly instead."""
-    mod = types.ModuleType("fastembed")
-    mod.TextEmbedding = _WrongWidthTextEmbedding
-    monkeypatch.setitem(sys.modules, "fastembed", mod)
-    embed_local.reset()
-    embed_local.load_now()
-    with pytest.raises(RuntimeError):
-        await embed_local.embed(["x"])
-    embed_local.reset()
+    try:
+        mod = types.ModuleType("fastembed")
+        mod.TextEmbedding = _WrongWidthTextEmbedding
+        monkeypatch.setitem(sys.modules, "fastembed", mod)
+        embed_local.reset()
+        embed_local.load_now()
+        with pytest.raises(RuntimeError):
+            await embed_local.embed(["x"])
+    finally:
+        embed_local.reset()

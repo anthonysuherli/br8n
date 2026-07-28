@@ -144,7 +144,7 @@ def warm_up() -> None:
     for possibly minutes) never makes this block, so every caller (notably
     ``embeddings_configured()``) stays fast regardless of load state.
     """
-    global _warm_thread
+    global _warm_thread, _fail_count
     with _state_lock:
         if _model is not None:
             return
@@ -155,7 +155,22 @@ def warm_up() -> None:
         _warm_thread = threading.Thread(
             target=_warm_load, name="br8n-embed-warmup", daemon=True
         )
-        _warm_thread.start()
+        try:
+            _warm_thread.start()
+        except RuntimeError:
+            # Thread pool exhausted or other startup failure — do not raise
+            # (callers rely on warm_up never raising). Clear the failed thread,
+            # increment the failure counter (same bound as load failures),
+            # and return normally so the bounded-retry logic applies.
+            _warm_thread = None
+            _fail_count += 1
+            if _fail_count == _MAX_CONSECUTIVE_FAILURES:
+                logger.warning(
+                    "local embedding warm-up thread failed to start %d times in a row; "
+                    "pausing background warm-up until reset()",
+                    _fail_count,
+                )
+            return
 
 
 def wait_for_warm_up(timeout: float = 60.0) -> bool:
