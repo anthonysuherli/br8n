@@ -253,8 +253,22 @@ python -m br8n.interfaces.mcp.server          # add to .claude/settings.json
   (supported), `pip install br8n`, and `uvx --from br8n br8n-mcp`.
 - [x] Obsidian-observable KB (VaultStore) — vision End Goal 6; spec
   `docs/truenorth/specs/2026-07-27-obsidian-md-datasource-design.md`.
-- [x] Local embeddings — keyless semantic search on the local tier; spec
+- [x] Local embeddings — keyless semantic search on the local tier via the optional
+  `br8n[local-embeddings]` extra (fastembed/ONNX, bge-small-en-v1.5, 384-dim, no
+  torch). **One active embedding space**, stamped in `embedding_space`: vectors from
+  different models aren't comparable, so a provider change recreates the `vec0` tables
+  at the new width and flags rows for the existing lazy drain. Provider resolution is
+  `settings.json` → config/env → auto-detect. An **auto-detected** change that would
+  discard vectors is *offered*, never applied (see AC2's amendment in the spec — a
+  shell missing the API key otherwise flips the space and drops every vector, and
+  `/br8n:capture`'s multi-session sweep made a two-session ping-pong possible); while
+  an offer is pending, `embeddings_configured()` reports False so capture/search
+  degrade to keyless behavior instead of raising. `python -m br8n.vault.reindex`
+  restores vectors keylessly. Spec:
   `docs/truenorth/specs/2026-07-28-local-embeddings-design.md`.
+  **Do not make `br8n_embeddings_set` async** — FastMCP runs sync tools directly on the
+  event loop with no yield point, and that is precisely what makes its mid-process
+  `DROP`/`CREATE` race-free.
 - [ ] Dogfooding — br8n is **not yet capturing its own development**. The local
   store holds 7 snapshots total and `br8n/main` has zero, so `/br8n:pickup` on this
   repo returns an empty card. The capture loop needs to run habitually here before
@@ -314,8 +328,8 @@ Embeddings — which provider is active, and switching it:
 
 | Tool | Purpose |
 |---|---|
-| `br8n_embeddings_get` | Report the active embedder (provider/model/dim/source) and pending re-embed count |
-| `br8n_embeddings_set` | Switch the embedding provider (`remote`/`local`/`none`/`auto`), rebuilding the vector space if the dimension changes |
+| `br8n_embeddings_get` | Report the active embedder (provider/model/dim/source), pending re-embed counts, and any **pending switch** awaiting confirmation |
+| `br8n_embeddings_set` | Switch the embedding provider (`remote`/`local`/`none`/`auto`). Returns one of three outcomes — **applied** (rebuilt in place, no restart), **deferred** (`ok:True` + the offer; nothing discarded), or **failed** (reverts to the exact prior setting, `ok:False`) |
 
 ## Plugin (Claude Code skills)
 

@@ -207,8 +207,19 @@ account and no key at all.
 
 **Keyless semantic search:** on the local tier, `pip install 'br8n[local-embeddings]'` 
 gives you semantic search with no API key at all — an on-device ONNX model 
-(bge-small-en-v1.5, ~130MB, no torch). Use `/br8n:embeddings` to check which provider 
-is active or switch between them.
+(bge-small-en-v1.5, ~130MB, no torch, downloaded once on first use). Use 
+`/br8n:embeddings` to check which provider is active or switch between them. A keyless 
+`python -m br8n.vault.reindex` rebuilds real vectors, not just text.
+
+Vectors from different models aren't comparable, so br8n keeps **one active embedding 
+space** and re-embeds when you change providers. Because a provider can also change 
+*by accident* — a shell without your API key resolves to the local model — br8n will 
+not silently throw your vectors away: a change it inferred from the environment is 
+**offered**, not applied. `/br8n:embeddings` (and `--check`) report the pending switch, 
+and it happens when you confirm. While an offer is pending, capture and search behave 
+exactly as they do with no key at all: nothing breaks, nothing is lost, and the 
+backlog re-embeds itself once you confirm. A switch you ask for explicitly applies 
+immediately.
 
 Sanity-check a local install with `python -m br8n.api.main --check` — it reports your 
 Python version, which backend tier is configured, whether `sqlite-vec` loads, whether 
