@@ -97,6 +97,12 @@ _ADD_COLUMN_MIGRATIONS: list[str] = [
     "ALTER TABLE kbs ADD COLUMN drift_offered_count INTEGER;",
     # 0009: structured capture fields (hypothesis / next_action / thread_id)
     "ALTER TABLE findings ADD COLUMN metadata TEXT;",
+    # 0010: vault (markdown-canonical local tier) — index stamps per finding
+    "ALTER TABLE findings ADD COLUMN content_hash TEXT;",
+    "ALTER TABLE findings ADD COLUMN vault_path TEXT;",
+    "ALTER TABLE findings ADD COLUMN vault_mtime REAL;",
+    "ALTER TABLE findings ADD COLUMN vault_size INTEGER;",
+    "ALTER TABLE findings ADD COLUMN needs_embed INTEGER;",
 ]
 
 # Cap on how many grounding finding ids a long-lived node (a repo touched for
