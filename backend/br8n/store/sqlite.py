@@ -29,7 +29,9 @@ connection is simplest and correct here. ``tags``/``provenance``/``content``/
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -38,7 +40,10 @@ from pathlib import Path
 import sqlite_vec
 from sqlite_vec import serialize_float32
 
+from br8n.config import get_config
 from br8n.constants import JOURNAL_SCOPE
+
+logger = logging.getLogger(__name__)
 
 # Synthetic single-tenant org for the local tier.
 _ORG = "local"
@@ -62,7 +67,6 @@ CREATE TABLE IF NOT EXISTS findings (
   id TEXT PRIMARY KEY, org_id TEXT NOT NULL, kb_id TEXT NOT NULL,
   title TEXT, content TEXT, category TEXT, confidence REAL,
   tags TEXT, provenance TEXT, metadata TEXT, created_at TEXT NOT NULL);
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_findings USING vec0(finding_id TEXT, embedding float[1536]);
 CREATE TABLE IF NOT EXISTS kb_synopsis (
   kb_id TEXT PRIMARY KEY, org_id TEXT, content TEXT,
   finding_count_at_build INTEGER, model TEXT, built_at TEXT);
@@ -72,7 +76,6 @@ CREATE TABLE IF NOT EXISTS explorations (
 CREATE TABLE IF NOT EXISTS kg_nodes (
   id TEXT PRIMARY KEY, org_id TEXT, kb_id TEXT NOT NULL,
   type TEXT, label TEXT, properties TEXT, grounded_in TEXT, created_at TEXT NOT NULL);
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_kg_nodes USING vec0(node_id TEXT, embedding float[1536]);
 CREATE TABLE IF NOT EXISTS kg_edges (
   id TEXT PRIMARY KEY, org_id TEXT, kb_id TEXT NOT NULL,
   source_node_id TEXT, target_node_id TEXT, relation TEXT,
@@ -85,6 +88,27 @@ CREATE TABLE IF NOT EXISTS kg_schemas (
   id TEXT PRIMARY KEY, org_id TEXT NOT NULL, kb_id TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 1, schema TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_kg_schemas_kb_version ON kg_schemas(kb_id, version);
+"""
+
+
+# Vector tables are created at the ACTIVE embedding dimension, not a constant:
+# a vec0 table's width is fixed at creation, and vectors from different models
+# are not comparable, so a provider change recreates them (see
+# ``_sync_embedding_space``).
+def _vec_schema(dim: int) -> str:
+    return (
+        f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_findings "
+        f"USING vec0(finding_id TEXT, embedding float[{dim}]);"
+        f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_kg_nodes "
+        f"USING vec0(node_id TEXT, embedding float[{dim}]);"
+    )
+
+
+_EMBEDDING_SPACE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS embedding_space (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  provider TEXT NOT NULL, model TEXT NOT NULL, dim INTEGER NOT NULL,
+  updated_at TEXT NOT NULL);
 """
 
 # Post-schema migrations: ADD COLUMN statements for older DBs.
@@ -103,6 +127,8 @@ _ADD_COLUMN_MIGRATIONS: list[str] = [
     "ALTER TABLE findings ADD COLUMN vault_mtime REAL;",
     "ALTER TABLE findings ADD COLUMN vault_size INTEGER;",
     "ALTER TABLE findings ADD COLUMN needs_embed INTEGER;",
+    # 0011: local embeddings — KG nodes join the lazy re-embed drain
+    "ALTER TABLE kg_nodes ADD COLUMN needs_embed INTEGER;",
 ]
 
 # Cap on how many grounding finding ids a long-lived node (a repo touched for
@@ -173,6 +199,111 @@ class SQLiteStore:
                 self._conn.execute(stmt)
                 self._conn.commit()
             except Exception:  # column already present
+                pass
+        self._sync_embedding_space()
+
+    # --- embedding space -------------------------------------------------------
+
+    def embedding_space(self) -> dict | None:
+        """The stamped active space, or None before the first stamp."""
+        try:
+            r = self._conn.execute(
+                "SELECT provider, model, dim FROM embedding_space WHERE id = 1;"
+            ).fetchone()
+        except Exception:  # table absent on a partial schema
+            return None
+        if r is None:
+            return None
+        return {"provider": r["provider"], "model": r["model"], "dim": int(r["dim"])}
+
+    def _declared_vec_dim(self) -> int | None:
+        """Width the existing vec_findings table was created with, if any."""
+        r = self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='vec_findings';"
+        ).fetchone()
+        if r is None or not r["sql"]:
+            return None
+        m = re.search(r"float\[(\d+)\]", r["sql"])
+        return int(m.group(1)) if m else None
+
+    def _stamp_embedding_space(self, provider: str, model: str, dim: int) -> None:
+        self._conn.execute(
+            "INSERT INTO embedding_space (id, provider, model, dim, updated_at) "
+            "VALUES (1, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET "
+            "provider=excluded.provider, model=excluded.model, dim=excluded.dim, "
+            "updated_at=excluded.updated_at;",
+            (provider, model, dim, _now_iso()),
+        )
+        self._conn.commit()
+
+    def _rebuild_vec_tables(self, dim: int) -> None:
+        """Recreate both vec tables at `dim` and queue everything for re-embed.
+
+        Safe because vectors are derived: the text lives in ``findings.content``
+        and, on the vault tier, canonically on disk. The refill is the existing
+        lazy ``needs_embed`` drain, so this call stays cheap (DDL + 2 UPDATEs).
+        """
+        self._conn.executescript(
+            "DROP TABLE IF EXISTS vec_findings; DROP TABLE IF EXISTS vec_kg_nodes;"
+        )
+        self._conn.executescript(_vec_schema(dim))
+        self._conn.execute("UPDATE findings SET needs_embed = 1;")
+        self._conn.execute("UPDATE kg_nodes SET needs_embed = 1;")
+        self._conn.commit()
+
+    def _sync_embedding_space(self) -> None:
+        """Ensure the vec tables match the active embedder. Best-effort.
+
+        Never raises: a failure here must not stop a store from opening, so the
+        vec tables are created up-front at a safe width and the identity logic
+        runs afterwards.
+        """
+        declared = self._declared_vec_dim()
+        fallback = declared or get_config().embedding.dim
+        try:
+            self._conn.executescript(_vec_schema(fallback))
+            self._conn.executescript(_EMBEDDING_SPACE_SCHEMA)
+            self._conn.commit()
+        except Exception:  # a store must still open
+            logger.warning("vec/embedding_space schema degraded", exc_info=True)
+            return
+
+        try:
+            from br8n.clients.embeddings import active_embedder
+
+            ident = active_embedder()
+            # No provider: keep whatever space exists — never discard vectors
+            # the user may restore by putting a key back.
+            if ident.provider == "none" or ident.dim <= 0:
+                return
+
+            stored = self.embedding_space()
+            if stored is None:
+                declared = self._declared_vec_dim()
+                if declared is not None and declared != ident.dim:
+                    # Pre-feature DB whose width disagrees with the active
+                    # embedder: trust the TABLE, not the provider, then let the
+                    # mismatch below rebuild. Stamping the active identity here
+                    # would silently label 1536-dim vectors as 384.
+                    self._stamp_embedding_space("unknown", "", declared)
+                    stored = self.embedding_space()
+                else:
+                    self._stamp_embedding_space(ident.provider, ident.model, ident.dim)
+                    return
+
+            if stored["dim"] != ident.dim or stored["model"] != ident.model:
+                logger.info(
+                    "embedding space change (%s/%sd -> %s/%sd); rebuilding index",
+                    stored["model"] or stored["provider"], stored["dim"],
+                    ident.model, ident.dim,
+                )
+                self._rebuild_vec_tables(ident.dim)
+                self._stamp_embedding_space(ident.provider, ident.model, ident.dim)
+        except Exception:  # identity problems never break a store
+            logger.warning("embedding-space sync degraded", exc_info=True)
+            try:
+                self._conn.rollback()
+            except Exception:
                 pass
 
     # --- findings — hot path -------------------------------------------------
