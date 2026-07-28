@@ -12,20 +12,33 @@ row text and mark ``needs_embed`` (the vec row is dropped); re-embedding
 happens on the next async read (Task 5).
 
 A pass has four phases:
-  A. walk    — collect every canonical .md path (uncapped, no stat).
+  A. walk    — collect every canonical .md path (uncapped, no stat — this
+               phase is therefore ALWAYS a complete pass over the vault).
   B. scan    — stat each path starting after the carry-over cursor, wrapping
                at most once around the full list; time-capped. Sets
-               ``scan_complete`` iff the whole list was covered this call.
+               ``scan_complete`` iff the whole list was covered this call
+               (used only to decide whether to reset the cursor).
   C. apply   — adopt/edit/malformed suspects, batch-capped.
-  D. delete  — only when this call's scan proved a full pass AND at least
-               one canonical dir exists under the current root, and only for
-               rows whose vault_path is under the current root. This is what
-               keeps a missing/re-pointed root from wiping the index.
+  D. delete  — driven by Phase A's (always-complete) walk, not by whether
+               Phase B's stat scan finished — a partial stat scan must never
+               suppress a genuine deletion. Guarded by: at least one
+               canonical dir exists under the current root (a missing/
+               re-pointed root must never look like "everything was
+               deleted") and only rows whose vault_path is under the CURRENT
+               root are candidates at all; and a magnitude guard that skips
+               the whole sweep when candidates are large relative to what's
+               indexed (an empty-but-present tree — a sync client
+               materializing dirs before contents, or evicted/online-only
+               files — must not read as a mass delete). The magnitude guard
+               is bypassed by ``ignore_caps=True`` (e.g. an explicit
+               reindex); until then the doctor (``vault_health``) keeps
+               reporting the missing files via ``missing_files``.
 """
 from __future__ import annotations
 
 import bisect
 import logging
+import math
 import os
 import time
 import uuid
@@ -39,6 +52,20 @@ from br8n.vault import files, layout
 logger = logging.getLogger(__name__)
 
 _DIR_CATEGORY = {"snapshots": "snapshot", "notes": "note", "journal": "journal"}
+
+
+def _coerce_tags(value) -> list:
+    """Normalize a frontmatter ``tags`` value into a list.
+
+    A YAML scalar (``tags: bug``) or a comma-separated string
+    (``tags: bug, feature``) coerces to a list; anything missing or
+    otherwise invalid (not a list or a string) clears to [].
+    """
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        return [p.strip() for p in value.split(",") if p.strip()]
+    return []
 
 
 def reconcile(store, *, force: bool = False, ignore_caps: bool = False) -> dict:
@@ -58,6 +85,11 @@ def reconcile(store, *, force: bool = False, ignore_caps: bool = False) -> dict:
             store._conn.rollback()  # never leave a write transaction open
         except Exception:  # noqa: BLE001
             pass
+        # the rollback discarded any mutations this pass made — don't
+        # over-report writes that never landed
+        counters["adopted"] = 0
+        counters["updated"] = 0
+        counters["deleted"] = 0
     return counters
 
 
@@ -91,7 +123,6 @@ def _pass(store, cfg, counters: dict, ignore_caps: bool) -> None:
     if store._reconcile_cursor and n:
         start = bisect.bisect_right(all_paths, store._reconcile_cursor) % n
 
-    seen: set[str] = set()
     suspects: list[Path] = []
     scan_complete = True
     last_scanned = ""
@@ -102,7 +133,6 @@ def _pass(store, cfg, counters: dict, ignore_caps: bool) -> None:
         sp = all_paths[(start + i) % n]
         last_scanned = sp
         path = Path(sp)
-        seen.add(sp)
         counters["scanned"] += 1
         row = index.get(sp)
         if row is None:
@@ -146,29 +176,48 @@ def _pass(store, cfg, counters: dict, ignore_caps: bool) -> None:
         except Exception:  # noqa: BLE001 — one bad file never stops the pass
             logger.warning("reconcile failed for %s", path, exc_info=True)
 
-    # Phase D: deletions — only when this call proved a full scan pass over
-    # every canonical file AND the root still has at least one canonical dir
-    # (C1: a missing/re-pointed root must never look like "everything was
-    # deleted"). Even then, only rows under the CURRENT root are candidates.
-    if scan_complete and any_dir_exists:
+    # Phase D: deletions — driven by Phase A's walk (F1: always a complete
+    # pass, unlike Phase B's time-capped stat scan — a partial stat scan must
+    # never suppress a genuine deletion). Guarded by (C1) at least one
+    # canonical dir existing under the current root, and rows under the
+    # CURRENT root only being candidates at all.
+    if any_dir_exists:
+        all_paths_set = set(all_paths)
         root_prefix = str(root) + os.sep
-        for sp, row in index.items():
-            if sp in seen or not sp.startswith(root_prefix):
-                continue
-            if Path(sp).exists():
-                continue
-            # C2: delete by (id, vault_path) against the stale pre-scan
-            # snapshot's path, so a row that was re-adopted under a new path
-            # (an Obsidian rename) survives — its current vault_path no
-            # longer matches this stale one, so the DELETE affects 0 rows.
-            cur = store._conn.execute(
-                "DELETE FROM findings WHERE id = ? AND vault_path = ?;", (row["id"], sp)
+        under_root = [(sp, row) for sp, row in index.items() if sp.startswith(root_prefix)]
+        candidates = [(sp, row) for sp, row in under_root if sp not in all_paths_set]
+
+        # F2: a magnitude guard — an empty-but-present tree (a sync client
+        # materializing dirs before contents, evicted/online-only files)
+        # must not read as "delete everything indexed". Skip the WHOLE sweep
+        # when candidates are large relative to what's indexed under this
+        # root; ignore_caps=True (an explicit reindex) bypasses the guard.
+        threshold = max(10, math.ceil(0.10 * len(under_root)))
+        if not ignore_caps and len(candidates) > threshold:
+            logger.warning(
+                "vault reconcile: mass-delete guard tripped (%d candidates > "
+                "threshold %d of %d indexed rows under root) — skipping all "
+                "deletions this pass; run an explicit reindex "
+                "(ignore_caps=True) once you've confirmed this is real",
+                len(candidates), threshold, len(under_root),
             )
-            if cur.rowcount == 1:
-                store._conn.execute(
-                    "DELETE FROM vec_findings WHERE finding_id = ?;", (row["id"],)
+        else:
+            for sp, row in candidates:
+                if Path(sp).exists():
+                    continue
+                # C2: delete by (id, vault_path) against the stale pre-scan
+                # snapshot's path, so a row that was re-adopted under a new
+                # path (an Obsidian rename) survives — its current
+                # vault_path no longer matches this stale one, so the
+                # DELETE affects 0 rows.
+                cur = store._conn.execute(
+                    "DELETE FROM findings WHERE id = ? AND vault_path = ?;", (row["id"], sp)
                 )
-                counters["deleted"] += 1
+                if cur.rowcount == 1:
+                    store._conn.execute(
+                        "DELETE FROM vec_findings WHERE finding_id = ?;", (row["id"],)
+                    )
+                    counters["deleted"] += 1
 
     store._conn.commit()
 
@@ -187,8 +236,9 @@ def _apply_edit(store, path: Path, row: dict) -> bool:
     fm, body = files.parse(text)  # ValueError → counted as malformed by caller
     title = str(fm.get("title") or files.title_from_body(body, path.stem))
     # M4: tags must be clearable from Obsidian — always write the parsed
-    # result (list if present, [] if absent/invalid), never keep stale tags.
-    tags = fm["tags"] if isinstance(fm.get("tags"), list) else []
+    # result, never keep stale tags. Scalar/comma-string tags coerce to a
+    # list; only a missing/invalid key clears to [].
+    tags = _coerce_tags(fm.get("tags"))
     meta_row = store._conn.execute(
         "SELECT metadata FROM findings WHERE id = ?;", (row["id"],)
     ).fetchone()
@@ -216,19 +266,24 @@ def _adopt(store, path: Path) -> bool:
     """Index a file the engine has no row for (hand-written, or a fresh db)."""
     import json
 
+    from br8n.store.sqlite import _json_load
+
     text = path.read_text(encoding="utf-8")
     fm, body = files.parse(text)  # ValueError propagates → malformed
     fid = str(fm.get("br8n_id") or uuid.uuid4().hex)
+
+    existing = store._conn.execute(
+        "SELECT vault_path, provenance, metadata FROM findings WHERE id = ? LIMIT 1;",
+        (fid,),
+    ).fetchone()
 
     # I3: a duplicated file (same br8n_id copied to a sibling file) must not
     # steal the original's row — that thrashes one row between two paths
     # forever. Mint a fresh id for THIS file when the id's existing row
     # points at a different path that still exists on disk. When the other
     # path is gone, this is a genuine rename, not a duplicate — let it
-    # through so _adopt/INSERT OR REPLACE re-points the row (C2).
-    existing = store._conn.execute(
-        "SELECT vault_path FROM findings WHERE id = ? LIMIT 1;", (fid,)
-    ).fetchone()
+    # through so _adopt/INSERT OR REPLACE re-points the row (C2), and the
+    # metadata/provenance merge below (F3) applies.
     if (
         existing is not None
         and existing["vault_path"]
@@ -239,16 +294,37 @@ def _adopt(store, path: Path) -> bool:
         fm["br8n_id"] = fid
         text = files.serialize(fm, body)
         files.atomic_write(path, text)
+        existing = None  # fresh id — nothing of this row's to merge from
 
     project, kb, category = _target_for(path, fm)
     org_id, project_id = store.resolve_project(project, create=True)
     kb_id = store.resolve_kb(org_id, project_id, kb, create=True)
     title = str(fm.get("title") or files.title_from_body(body, path.stem))
     created = str(fm.get("created") or datetime.now(timezone.utc).isoformat())
-    tags = fm.get("tags") if isinstance(fm.get("tags"), list) else []
+    # Scalar/comma-string tags coerce to a list; only a missing/invalid key
+    # clears to [].
+    tags = _coerce_tags(fm.get("tags"))
     source = str(fm.get("source") or "human")
     confidence = fm.get("confidence") if isinstance(fm.get("confidence"), (int, float)) else 0.6
-    meta = {"next_action": str(fm["next_action"])} if fm.get("next_action") else None
+
+    # F3: a rename/re-adopt of a KNOWN id must not clobber row metadata the
+    # file doesn't (fully) carry — e.g. a snapshot's hypothesis/thread_id
+    # only ever lived in the metadata column, never in frontmatter, so
+    # rebuilding purely from the file would silently drop them. Merge:
+    # start from the existing row's provenance/metadata, then apply the
+    # file's next_action. A brand-new id has nothing of its own to merge.
+    if existing is not None:
+        provenance = _json_load(existing["provenance"], None)
+        if provenance is None:
+            provenance = [{"source": "vault-adopted", "path": str(path)}]
+        meta = _json_load(existing["metadata"], None) or {}
+    else:
+        provenance = [{"source": "vault-adopted", "path": str(path)}]
+        meta = {}
+    if fm.get("next_action"):
+        meta["next_action"] = str(fm["next_action"])
+    else:
+        meta.pop("next_action", None)
 
     if source == "human" and (not fm.get("br8n_id") or fm.get("source") is None):
         # write the join key (and source) back so the file self-identifies
@@ -265,7 +341,7 @@ def _adopt(store, path: Path) -> bool:
         "confidence, tags, provenance, metadata, created_at, vault_path, content_hash, "
         "vault_mtime, vault_size, needs_embed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1);",
         (fid, org_id, kb_id, title, body, category, confidence, json.dumps(list(tags)),
-         json.dumps([{"source": "vault-adopted", "path": str(path)}]),
+         json.dumps(provenance),
          json.dumps(meta) if meta else None, created, str(path), h, st.st_mtime, st.st_size),
     )
     return True

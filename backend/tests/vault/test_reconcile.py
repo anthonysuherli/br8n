@@ -254,11 +254,13 @@ async def test_pass_abort_rolls_back_uncommitted_writes(store, monkeypatch):
     counters = reconcile.reconcile(store, force=True, ignore_caps=True)  # must not raise
 
     assert store._conn.in_transaction is False
+    assert counters["adopted"] == 0  # Minor: rollback zeroes mutation counters
+    assert counters["updated"] == 0
+    assert counters["deleted"] == 0
 
     monkeypatch.undo()  # restore Path.exists before the follow-up read
     listed = store.list_findings(kb_id, category="note")
     assert not any(f["title"] == "Other" for f in listed["findings"])
-    del counters  # only asserted not to raise above
 
 
 # --- M2: malformed files must stop re-suspecting every pass -----------------
@@ -309,3 +311,154 @@ def test_target_for_outside_root_falls_back(tmp_path, monkeypatch):
 
     assert reconcile._target_for(outside, {}) == ("unknown", "default", "finding")
     assert reconcile._target_for(outside, {"project": "p", "kb": "k"}) == ("p", "k", "finding")
+
+
+# --- F1: deletion detection must not depend on a complete stat scan --------
+
+
+@pytest.mark.asyncio
+async def test_deletion_detected_despite_partial_scan(store, monkeypatch):
+    import os
+
+    from br8n.config import get_config
+
+    kb_id = _mk_kb(store)
+    fids = [await _insert(store, kb_id, title=f"Note {i}") for i in range(5)]
+    victim = fids[0]
+    victim_path = store.vault_path_for(victim)
+    os.unlink(victim_path)
+
+    cfg = get_config().vault
+    monkeypatch.setattr(cfg, "reconcile_time_cap_ms", 0)  # forces a partial stat scan
+
+    counters = reconcile.reconcile(store, force=True)
+
+    assert counters["deleted"] == 1
+    with pytest.raises(RuntimeError):
+        store.get_finding(kb_id, victim)
+
+
+# --- F2: a magnitude guard must block a mass-delete misread -----------------
+
+
+@pytest.mark.asyncio
+async def test_mass_delete_guard_blocks_wholesale_wipe(store):
+    import os
+
+    kb_id = _mk_kb(store)
+    fids = [await _insert(store, kb_id, title=f"Note {i}") for i in range(12)]
+    for fid in fids:
+        os.unlink(store.vault_path_for(fid))  # dirs remain, files gone
+
+    counters = reconcile.reconcile(store, force=True)
+
+    assert counters["deleted"] == 0
+    for fid in fids:
+        assert store.get_finding(kb_id, fid)  # every row survives
+
+
+@pytest.mark.asyncio
+async def test_mass_delete_guard_bypassed_with_ignore_caps(store):
+    import os
+
+    kb_id = _mk_kb(store)
+    fids = [await _insert(store, kb_id, title=f"Note {i}") for i in range(12)]
+    for fid in fids:
+        os.unlink(store.vault_path_for(fid))
+
+    counters = reconcile.reconcile(store, force=True, ignore_caps=True)
+
+    assert counters["deleted"] == 12
+    for fid in fids:
+        with pytest.raises(RuntimeError):
+            store.get_finding(kb_id, fid)
+
+
+# --- F3: re-adoption must not strip row metadata/provenance ----------------
+
+
+@pytest.mark.asyncio
+async def test_rename_preserves_row_metadata(store):
+    import os
+
+    kb_id = _mk_kb(store)
+    meta = {"hypothesis": "H", "next_action": "A", "thread_id": "T"}
+    [fid] = await store.insert_findings(
+        [{"kb_id": kb_id, "title": "Snap", "content": "# Snap\n\nbody",
+          "category": "snapshot", "confidence": 1.0, "tags": ["snap"],
+          "provenance": [{"source": "capture", "session": "abc"}],
+          "metadata": meta, "embedding": None}]
+    )
+    old_path = Path(store.vault_path_for(fid))
+    new_path = old_path.with_name("renamed-" + old_path.name)
+    os.rename(old_path, new_path)
+
+    counters = reconcile.reconcile(store, force=True, ignore_caps=True)
+
+    assert counters["adopted"] == 1
+    row = store.get_finding(kb_id, fid)
+    assert row["metadata"]["hypothesis"] == "H"
+    assert row["metadata"]["thread_id"] == "T"
+    assert row["metadata"]["next_action"] == "A"
+    assert any(p.get("source") == "capture" for p in row["provenance"])
+
+
+# --- Minor: scalar/comma-string tags must coerce to a list -----------------
+
+
+@pytest.mark.asyncio
+async def test_scalar_tag_coerced_to_list_on_edit(store):
+    kb_id = _mk_kb(store)
+    fid = await _insert(store, kb_id)
+    path = store.vault_path_for(fid)
+    text = open(path, encoding="utf-8").read()
+    fm, _ = vfiles.parse(text)
+    fm["tags"] = "bug"  # YAML scalar, not a list
+    open(path, "w", encoding="utf-8").write(vfiles.serialize(fm, "# Note\n\nedited body"))
+
+    counters = reconcile.reconcile(store, force=True)
+    assert counters["updated"] == 1
+    assert store.get_finding(kb_id, fid)["tags"] == ["bug"]
+
+
+@pytest.mark.asyncio
+async def test_comma_string_tags_coerced_to_list_on_adopt(store):
+    kb_id = _mk_kb(store)
+    d = layout.vault_root() / "notes" / "br8n" / "main"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "2026-07-27-1400-scalar-tags.md").write_text(
+        "---\ntags: bug, feature\n---\n\n# Scalar tags\n\nbody\n"
+    )
+
+    counters = reconcile.reconcile(store, force=True)
+    assert counters["adopted"] == 1
+    listed = store.list_findings(kb_id, category="note")
+    row = next(f for f in listed["findings"] if f["title"] == "Scalar tags")
+    assert row["tags"] == ["bug", "feature"]
+
+
+# --- Minor: an mtime-only touch restamps without a spurious update ---------
+
+
+@pytest.mark.asyncio
+async def test_mtime_only_touch_restamps_without_update(store):
+    import os
+
+    kb_id = _mk_kb(store)
+    fid = await _insert(store, kb_id)
+    path = store.vault_path_for(fid)
+    row_before = store.get_finding(kb_id, fid)
+
+    st = os.stat(path)
+    os.utime(path, (st.st_atime + 5, st.st_mtime + 5))  # mtime lies, content unchanged
+
+    counters = reconcile.reconcile(store, force=True)
+    assert counters["updated"] == 0
+    row_after = store.get_finding(kb_id, fid)
+    assert row_after["content"] == row_before["content"]
+    assert row_after["title"] == row_before["title"]
+
+    # restamped — no longer a suspect on the following pass
+    counters2 = reconcile.reconcile(store, force=True)
+    assert counters2["updated"] == 0
+    assert counters2["scanned"] >= 1
