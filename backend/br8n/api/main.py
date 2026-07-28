@@ -120,6 +120,31 @@ def check() -> int:
             ok = False
             line("FAIL", "db path", f"{db_path} not writable: {exc}")
 
+        # vault: canonical markdown health. Best-effort — a broken vault is a
+        # warning, never a doctor failure (fail-silent tier), so this block
+        # never flips `ok`.
+        try:
+            from br8n.store import get_store
+            from br8n.vault.layout import vault_root
+            from br8n.vault.reconcile import vault_health
+
+            root = vault_root()
+            probe = root / ".doctor-probe"
+            probe.write_text("ok")
+            probe.unlink()
+            h = vault_health(get_store())
+            drift = h["unindexed_files"] + h["missing_files"]
+            status = "warn" if (h["malformed"] > 0 or drift > 0) else "ok"
+            detail = (
+                f"{root} — {h['files']} files, {h['indexed']} indexed, "
+                f"{h['malformed']} malformed, drift {drift}"
+            )
+            if drift > 0:
+                detail += " (persistent drift: python -m br8n.vault.reindex)"
+            line(status, "vault", detail)
+        except Exception as exc:  # noqa: BLE001 — vault problems are warnings, not failures
+            line("warn", "vault", f"unavailable: {exc}")
+
     settings = get_settings()
     if settings.ai_gateway_api_key or settings.openai_api_key:
         src = "AI_GATEWAY_API_KEY" if settings.ai_gateway_api_key else "OPENAI_API_KEY"

@@ -101,10 +101,16 @@ all engine logic (capture, preamble/coverage, synopsis, exploration) is shared a
 never touches a storage client directly — it calls `store = get_store()`.
 
 - **`br8n/store/`** — `Store` protocol (`base.py`) with two implementations:
-  - `SQLiteStore` (free/local) — SQLite + `sqlite-vec`, single synthetic
-    `org_id="local"`, no auth/no Supabase/single device. DB at `~/.br8n/brain.db`
-    (override `BR8N_DB_PATH`); `_ensure_schema()` runs `CREATE TABLE IF NOT EXISTS`
-    on first open. Cached as a per-`db_path` singleton (one reused connection).
+  - `VaultStore` (free/local) — markdown is canonical: every finding/note/journal
+    entry is a frontmatter `.md` file under a vault tree (default `~/.br8n/vault/`,
+    override `BR8N_VAULT_PATH`; browsable in Obsidian). SQLite (+ `sqlite-vec`) is
+    demoted to a rebuildable index/cache over that tree — single synthetic
+    `org_id="local"`, no auth/no Supabase/single device, DB at `~/.br8n/brain.db`
+    (override `BR8N_DB_PATH`). On-access reconcile keeps the index caught up with
+    hand-edits made directly in the vault; if the index is ever deleted or drifts,
+    `python -m br8n.vault.reindex` rebuilds it from the markdown alone — always
+    user-initiated, never run automatically. Cached as a per-`db_path` singleton
+    (one reused connection).
   - `SupabaseStore` (paid/cloud) — wraps today's `service_client()` / `user_client()`
     calls (GoTrue + pgvector + RLS). Built fresh per request (carries the per-request
     `access_token` for RLS scope).
@@ -243,6 +249,8 @@ python -m br8n.interfaces.mcp.server          # add to .claude/settings.json
   3.11/3.12 + a `twine check`ed build) gates every push. Released as **v1.1.1** and
   published to PyPI as `br8n`. Three working install paths: plugin marketplace
   (supported), `pip install br8n`, and `uvx --from br8n br8n-mcp`.
+- [x] Obsidian-observable KB (VaultStore) — vision End Goal 6; spec
+  `docs/truenorth/specs/2026-07-27-obsidian-md-datasource-design.md`.
 - [ ] Dogfooding — br8n is **not yet capturing its own development**. The local
   store holds 7 snapshots total and `br8n/main` has zero, so `/br8n:pickup` on this
   repo returns an empty card. The capture loop needs to run habitually here before
