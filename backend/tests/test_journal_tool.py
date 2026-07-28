@@ -1,6 +1,7 @@
-"""Local-tier test for persist_journal: a `journal` Finding + a global markdown
-file, with NO synopsis rebuild. Mirrors test_note_tool.py's harness — real
-SQLiteStore via tmp BR8N_DB_PATH, only the embedder faked.
+"""Local-tier test for persist_journal: a `journal` Finding, with its canonical
+markdown written into the vault (`VaultStore.insert_findings`), and NO
+synopsis rebuild. Mirrors test_note_tool.py's harness — real SQLiteStore via
+tmp BR8N_DB_PATH, only the embedder faked.
 """
 from __future__ import annotations
 
@@ -41,9 +42,11 @@ async def test_persist_journal_writes_finding_and_global_md(tmp_path, monkeypatc
 
     assert res["finding_id"]
     assert res["entry_path"].endswith(".md")
-    # markdown mirror lives in the GLOBAL journal dir (tmp BR8N_DB_PATH parent)
-    assert Path(res["entry_path"]).parent == tmp_path / "journal"
+    # local tier: canonical markdown is the vault file (journal/<year>/...),
+    # not the legacy GLOBAL journal dir
+    assert str(tmp_path / "vault" / "journal") in res["entry_path"]
     assert Path(res["entry_path"]).exists()
+    assert not (tmp_path / "journal").exists()
 
     store = store_pkg.get_store(ctx.access_token)
     got = store.get_finding(ctx.kb_id, res["finding_id"])

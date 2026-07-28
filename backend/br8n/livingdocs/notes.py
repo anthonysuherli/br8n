@@ -1,7 +1,9 @@
-"""Persist a session note as a `note` Finding AND a markdown file.
+"""Persist a session note as a `note` Finding, plus its canonical markdown.
 
-A note is dual-written: it becomes a `category="note"` Finding (embedded,
-searchable, feeds resume/activity) and a markdown file under
+A note becomes a `category="note"` Finding (embedded, searchable, feeds
+resume/activity). On the local tier, the canonical markdown file is the one
+`VaultStore.insert_findings` already wrote into the vault — no second write.
+On the cloud tier, this dual-writes: the Finding plus a markdown file under
 `.br8n/notes/<kb>/`. This mirrors snapshot persistence in
 `br8n/capture/service.py` — same embed→insert→schedule_rebuild shape.
 """
@@ -14,7 +16,7 @@ from br8n.agent.state import TenantContext
 from br8n.agent.synopsis import schedule_rebuild
 from br8n.clients.embeddings import embed_batch
 from br8n.livingdocs.paths import DocPaths, ensure_layout
-from br8n.store import get_store
+from br8n.store import active_backend, get_store
 
 
 def _slug(text: str) -> str:
@@ -49,8 +51,10 @@ async def persist_note(
 ) -> dict:
     """Embed + insert the note as a `note` Finding, then write the markdown file.
 
-    Returns ``{"finding_id", "note_path"}``. Fires a synopsis rebuild after the
-    write (fire-and-forget in the caller) so the resume card stays current.
+    Returns ``{"finding_id", "note_path"}`` — ``note_path`` is the vault file on
+    the local tier, the legacy `.br8n/notes/<kb>/` file on cloud. Fires a
+    synopsis rebuild after the write (fire-and-forget in the caller) so the
+    resume card stays current.
     """
     captured_at = captured_at or datetime.now(timezone.utc).isoformat()
     next_action = next_action.strip() if next_action else next_action
@@ -73,12 +77,18 @@ async def persist_note(
     }
     [embedding] = await embed_batch([content])
     row["embedding"] = embedding
-    [finding_id] = await get_store(ctx.access_token).insert_findings([row])
+    store = get_store(ctx.access_token)
+    [finding_id] = await store.insert_findings([row])
 
-    paths = DocPaths(project_path=project_path, kb=kb)
-    ensure_layout(paths)
-    note_path = paths.notes_dir / _note_filename(captured_at, title)
-    note_path.write_text(_markdown(title, content))
+    if active_backend() == "local":
+        # canonical file already written by VaultStore.insert_findings
+        note_path = store.vault_path_for(finding_id) or ""
+    else:
+        paths = DocPaths(project_path=project_path, kb=kb)
+        ensure_layout(paths)
+        p = paths.notes_dir / _note_filename(captured_at, title)
+        p.write_text(_markdown(title, content))
+        note_path = str(p)
 
     schedule_rebuild(ctx)
-    return {"finding_id": finding_id, "note_path": str(note_path)}
+    return {"finding_id": finding_id, "note_path": note_path}

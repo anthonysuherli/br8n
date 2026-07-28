@@ -1,5 +1,5 @@
-"""Local-tier test for persist_note: a note lands as BOTH a `note` Finding
-and a markdown file under .br8n/notes/<kb>/.
+"""Local-tier test for persist_note: a note lands as a `note` Finding, with
+its canonical markdown written into the vault (`VaultStore.insert_findings`).
 
 Mirrors test_engine_local.py: BR8N_BACKEND=local + a tmp BR8N_DB_PATH wire
 the real SQLiteStore (no storage mocks); only the embedder is faked so no OpenAI
@@ -10,6 +10,7 @@ no-op (no Anthropic).
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 
 import pytest
 
@@ -43,7 +44,6 @@ async def test_persist_note_writes_finding_and_file(tmp_path, monkeypatch):
 
     from br8n.interfaces.mcp.tenancy import resolve_tenant
     from br8n.livingdocs.notes import persist_note
-    from br8n.livingdocs.paths import DocPaths
     from br8n.store import get_store
 
     ctx = resolve_tenant("proj", "main", create=True)
@@ -61,12 +61,14 @@ async def test_persist_note_writes_finding_and_file(tmp_path, monkeypatch):
     listed = store.list_findings(ctx.kb_id, category="note")
     assert listed["count"] == 1
 
-    p = DocPaths(project_path=str(tmp_path), kb="main")
-    files = list(p.notes_dir.glob("*.md"))
-    assert len(files) == 1
-    assert "Chose X over Y" in files[0].read_text()
+    # local tier: no legacy .br8n/notes/<kb>/ dir — the vault file is canonical
+    assert not (tmp_path / ".br8n" / "notes").exists()
 
     assert res["finding_id"]
     assert res["note_path"].endswith(".md")
+    note_path = Path(res["note_path"])
+    assert str(tmp_path / "vault" / "notes") in str(note_path)
+    assert note_path.exists()
+    assert "Chose X over Y" in note_path.read_text()
 
     store_pkg._local_stores.clear()

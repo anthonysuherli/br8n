@@ -1,10 +1,12 @@
-"""Persist a journal entry as a `journal` Finding AND a global markdown file.
+"""Persist a journal entry as a `journal` Finding, plus its canonical markdown.
 
 A journal entry is the cross-project, write-anytime counterpart to a session
-note. Unlike persist_note it (1) stores under the reserved JOURNAL_SCOPE KB,
-(2) writes its markdown to the GLOBAL ~/.br8n/journal/ dir (not a project's
-.br8n/), and (3) never schedules a synopsis rebuild — the journal is not tied
-to any repo+branch.
+note. It (1) stores under the reserved JOURNAL_SCOPE KB and (2) never
+schedules a synopsis rebuild — the journal is not tied to any repo+branch. On
+the local tier, the canonical markdown is the vault file `VaultStore.insert_findings`
+already wrote (under `journal/<year>/`) — no second write. On the cloud tier,
+this dual-writes: the Finding plus a markdown file in the GLOBAL
+~/.br8n/journal/ dir.
 
     persist_journal(ctx, text, type?, tags?) ──► finding{category:'journal'} + md
 """
@@ -18,7 +20,7 @@ from pathlib import Path
 from br8n.agent.state import TenantContext
 from br8n.clients.embeddings import embed_batch
 from br8n.constants import JOURNAL_SCOPE  # noqa: F401 — re-exported for callers
-from br8n.store import get_store
+from br8n.store import active_backend, get_store
 
 
 def _slug(text: str) -> str:
@@ -69,10 +71,12 @@ async def persist_journal(
 ) -> dict:
     """Embed + insert the entry as a `journal` Finding, then write the markdown.
 
-    Returns ``{"finding_id", "entry_path"}``. `type` (e.g. insight/reflection/
-    reference/decision) and `tags` are folded into the finding's tags for
-    filtering. `originating_project`, when given, is stamped into provenance —
-    where you were when you journaled — but storage is always the journal scope.
+    Returns ``{"finding_id", "entry_path"}`` — ``entry_path`` is the vault file
+    on the local tier, the legacy global journal-dir file on cloud. `type`
+    (e.g. insight/reflection/reference/decision) and `tags` are folded into the
+    finding's tags for filtering. `originating_project`, when given, is stamped
+    into provenance — where you were when you journaled — but storage is always
+    the journal scope.
     """
     captured_at = captured_at or datetime.now(timezone.utc).isoformat()
     tags = list(tags or [])
@@ -98,8 +102,15 @@ async def persist_journal(
     }
     [embedding] = await embed_batch([text])
     row["embedding"] = embedding
-    [finding_id] = await get_store(ctx.access_token).insert_findings([row])
+    store = get_store(ctx.access_token)
+    [finding_id] = await store.insert_findings([row])
 
-    entry_path = journal_dir() / _entry_filename(captured_at, title)
-    entry_path.write_text(_markdown(title, text, type, tags))
-    return {"finding_id": finding_id, "entry_path": str(entry_path)}
+    if active_backend() == "local":
+        # canonical file already written by VaultStore.insert_findings
+        entry_path = store.vault_path_for(finding_id) or ""
+    else:
+        p = journal_dir() / _entry_filename(captured_at, title)
+        p.write_text(_markdown(title, text, type, tags))
+        entry_path = str(p)
+
+    return {"finding_id": finding_id, "entry_path": entry_path}

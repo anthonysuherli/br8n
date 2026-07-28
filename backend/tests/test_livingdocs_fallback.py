@@ -8,6 +8,7 @@ Only the PURE, deterministic markdown synthesizer is unit-tested here. The async
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 
 import pytest
 
@@ -61,7 +62,6 @@ async def test_distill_fallback_note_persists_from_snapshots(tmp_path, monkeypat
 
     from br8n.interfaces.mcp.tenancy import resolve_tenant
     from br8n.livingdocs.fallback import distill_fallback_note
-    from br8n.livingdocs.paths import DocPaths
     from br8n.store import get_store
 
     ctx = resolve_tenant("proj", "main", create=True)
@@ -94,9 +94,10 @@ async def test_distill_fallback_note_persists_from_snapshots(tmp_path, monkeypat
     listed = store.list_findings(ctx.kb_id, category="note")
     assert listed["count"] == 1
 
-    files = list(DocPaths(project_path=str(tmp_path), kb="main").notes_dir.glob("*.md"))
-    assert len(files) == 1
-    body = files[0].read_text()
+    # local tier: canonical markdown is the vault file, not .br8n/notes/<kb>/
+    note_path = Path(res["note_path"])
+    assert str(tmp_path / "vault" / "notes") in str(note_path)
+    body = note_path.read_text()
     assert "## Changes" in body
     assert "auth" in body.lower()
 
