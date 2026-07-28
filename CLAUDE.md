@@ -62,7 +62,7 @@ br8n fully standalone.
   `/br8n:journal`, `/br8n:docs`
 - `br8n/api/` — FastAPI: `/v1/capture`, `/v1/resume/{project}/{kb}`, `/v1/explore/...`,
   `/v1/activity/{graph,stats}`, `/v1/chat`
-- `br8n/interfaces/mcp/server.py` — 23 MCP tools across capture/resume, living docs,
+- `br8n/interfaces/mcp/server.py` — 25 MCP tools across capture/resume, living docs,
   and the KG schema seam (full table in the MCP tools section below)
 - `ios-app/` — native SwiftUI companion (first standalone UI). v1 = read spine:
   Sign in, browse cross-repo activity, read resume cards. Consumes `/v1/projects`
@@ -204,8 +204,10 @@ python -m br8n.interfaces.mcp.server          # add to .claude/settings.json
 - Auth: cloud tier uses a pre-shared API key (`BR8N_API_KEY` in .env, passed as a
   Bearer token by clients); local tier requires no br8n auth key (loopback-only, see
   Storage tiers). Separate from auth: an embedding key (`AI_GATEWAY_API_KEY` /
-  `OPENAI_API_KEY`) is what gates semantic search, and `TAVILY_API_KEY` gates explore —
-  capture/resume run without either.
+  `OPENAI_API_KEY`) is what gates semantic search, unless the `local-embeddings` extra
+  is installed, in which case the local tier embeds on-device (bge-small-en-v1.5,
+  384-dim) with no key needed. `TAVILY_API_KEY` gates explore — capture/resume run
+  without either.
 - Supabase (cloud tier): same instance and schema as delapan (no migration divergence)
 - KB naming: project = workspace folder name, kb = git branch name
 
@@ -251,6 +253,8 @@ python -m br8n.interfaces.mcp.server          # add to .claude/settings.json
   (supported), `pip install br8n`, and `uvx --from br8n br8n-mcp`.
 - [x] Obsidian-observable KB (VaultStore) — vision End Goal 6; spec
   `docs/truenorth/specs/2026-07-27-obsidian-md-datasource-design.md`.
+- [x] Local embeddings — keyless semantic search on the local tier; spec
+  `docs/truenorth/specs/2026-07-28-local-embeddings-design.md`.
 - [ ] Dogfooding — br8n is **not yet capturing its own development**. The local
   store holds 7 snapshots total and `br8n/main` has zero, so `/br8n:pickup` on this
   repo returns an empty card. The capture loop needs to run habitually here before
@@ -306,6 +310,13 @@ Knowledge graph — the schema seam:
 | `br8n_schema_drift` | Decide cold-start vs drift — drives the gated `/br8n:schema` offer |
 | `br8n_mark_init_offered` / `br8n_mark_drift_offered` | Stamp an offer so it is not re-raised ("offer once, then go quiet") |
 
+Embeddings — which provider is active, and switching it:
+
+| Tool | Purpose |
+|---|---|
+| `br8n_embeddings_get` | Report the active embedder (provider/model/dim/source) and pending re-embed count |
+| `br8n_embeddings_set` | Switch the embedding provider (`remote`/`local`/`none`/`auto`), rebuilding the vector space if the dimension changes |
+
 ## Plugin (Claude Code skills)
 
 br8n ships as a Claude Code plugin (the primary developer surface). Skills live
@@ -325,9 +336,10 @@ skills/
   journal/SKILL.md            /br8n:journal — append to / search the journal
   docs/SKILL.md               /br8n:docs — the distilled doc tree built from notes
   schema/SKILL.md             /br8n:schema — design or reshape the KG ontology (the one human-in-the-loop seam)
+  embeddings/SKILL.md         /br8n:embeddings — report or switch the active embedding provider
 ```
 
-All ten are registered in `.claude-plugin/plugin.json`; a skill on disk that is
+All eleven are registered in `.claude-plugin/plugin.json`; a skill on disk that is
 not listed there never loads for an installed user.
 
 **Target resolution** (simpler than Delapan — no active-KB state):

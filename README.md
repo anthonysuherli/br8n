@@ -205,6 +205,11 @@ account and no key at all.
 `AI_GATEWAY_API_KEY` or `OPENAI_API_KEY`. The explore / gap-fill pipeline needs that 
 *and* `TAVILY_API_KEY` for web search.
 
+**Keyless semantic search:** on the local tier, `pip install 'br8n[local-embeddings]'` 
+gives you semantic search with no API key at all — an on-device ONNX model 
+(bge-small-en-v1.5, ~130MB, no torch). Use `/br8n:embeddings` to check which provider 
+is active or switch between them.
+
 Sanity-check a local install with `python -m br8n.api.main --check` — it reports your 
 Python version, which backend tier is configured, whether `sqlite-vec` loads, whether 
 the DB path is writable, and whether the embedding and explore keys are present. 

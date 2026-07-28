@@ -145,13 +145,52 @@ def check() -> int:
         except Exception as exc:  # noqa: BLE001 — vault problems are warnings, not failures
             line("warn", "vault", f"unavailable: {exc}")
 
-    settings = get_settings()
-    if settings.ai_gateway_api_key or settings.openai_api_key:
-        src = "AI_GATEWAY_API_KEY" if settings.ai_gateway_api_key else "OPENAI_API_KEY"
-        line("ok", "embeddings", f"{src} set — semantic search enabled")
-    else:
-        line("off", "embeddings", "no key — capture/resume work, semantic search does not")
+        # embeddings: which provider is active and whether a refill is draining.
+        # Best-effort — a broken embedder is a warning, never a doctor failure,
+        # so this block never touches `ok`.
+        try:
+            from br8n.clients import embed_local
+            from br8n.clients.embeddings import active_embedder
+            from br8n.store import get_store
 
+            ident = active_embedder()
+            conn = get_store()._conn
+            pending = (
+                conn.execute(
+                    "SELECT COUNT(*) AS n FROM findings WHERE needs_embed = 1;"
+                ).fetchone()["n"]
+                + conn.execute(
+                    "SELECT COUNT(*) AS n FROM kg_nodes WHERE needs_embed = 1;"
+                ).fetchone()["n"]
+            )
+            if ident.provider == "none":
+                detail = (
+                    f"provider=none (source: {ident.source}) — set "
+                    "AI_GATEWAY_API_KEY/OPENAI_API_KEY, or pip install "
+                    "'br8n[local-embeddings]'"
+                )
+                line("warn", "embeddings", detail)
+            else:
+                detail = (
+                    f"{ident.provider} {ident.model} {ident.dim}d "
+                    f"(source: {ident.source})"
+                )
+                if ident.provider == "local" and not embed_local.ready():
+                    detail += " — model loading"
+                if pending:
+                    detail += f", {pending} pending re-embed"
+                line("ok" if not pending else "warn", "embeddings", detail)
+        except Exception as exc:  # reporting never fails the doctor
+            line("warn", "embeddings", f"unavailable: {exc}")
+    else:
+        settings = get_settings()
+        if settings.ai_gateway_api_key or settings.openai_api_key:
+            src = "AI_GATEWAY_API_KEY" if settings.ai_gateway_api_key else "OPENAI_API_KEY"
+            line("ok", "embeddings", f"{src} set — semantic search enabled")
+        else:
+            line("off", "embeddings", "no key — capture/resume work, semantic search does not")
+
+    settings = get_settings()
     if getattr(settings, "tavily_api_key", None):
         line("ok", "explore", "TAVILY_API_KEY set")
     else:

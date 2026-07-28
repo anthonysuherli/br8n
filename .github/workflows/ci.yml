@@ -28,10 +28,16 @@ jobs:
           cache: pip
           cache-dependency-path: backend/pyproject.toml
 
+      # The local-embeddings extra (fastembed) is installed on one leg only so
+      # the real on-device model path is exercised once without slowing every leg.
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          if [ "${{ matrix.python-version }}" = "3.12" ]; then
+            pip install -e ".[dev,local-embeddings]"
+          else
+            pip install -e ".[dev]"
+          fi
 
       - name: Lint
         run: ruff check .
