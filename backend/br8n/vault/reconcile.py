@@ -448,24 +448,39 @@ def _target_for(path: Path, fm: dict) -> tuple[str, str, str]:
     return (project, kb, category)
 
 
-def vault_health(store) -> dict:
-    """Doctor read: file/index counts + drift. Best-effort, never raises."""
-    out = {"files": 0, "indexed": 0, "unindexed_files": 0, "missing_files": 0, "malformed": 0}
+def vault_health(store, *, budget_ms: int = 2000) -> dict:
+    """Doctor read: file/index counts + drift. Best-effort, never raises.
+
+    ``indexed`` counts rows (not distinct paths), so two rows sharing one
+    ``vault_path`` — index corruption — stay visible. The walk (which reads
+    and parses every canonical file) is time-capped by ``budget_ms``: when
+    the cap trips, ``capped`` is True, ``files``/``unindexed_files``/
+    ``malformed`` cover only the walked prefix, and ``missing_files`` is
+    left at 0 rather than misreporting drift from a partial walk.
+    """
+    out = {"files": 0, "indexed": 0, "unindexed_files": 0, "missing_files": 0,
+           "malformed": 0, "capped": False}
     try:
         root = layout.vault_root()
+        out["indexed"] = store._conn.execute(
+            "SELECT COUNT(*) AS n FROM findings WHERE vault_path IS NOT NULL;"
+        ).fetchone()["n"]
         indexed_paths = {
             r["vault_path"]
             for r in store._conn.execute(
                 "SELECT vault_path FROM findings WHERE vault_path IS NOT NULL;"
             ).fetchall()
         }
-        out["indexed"] = len(indexed_paths)
+        deadline = time.monotonic() + budget_ms / 1000.0
         seen = set()
         for d in layout.CANONICAL_DIRS:
             base = root / d
             if not base.is_dir():
                 continue
             for p in base.rglob("*.md"):
+                if time.monotonic() > deadline:
+                    out["capped"] = True
+                    break
                 out["files"] += 1
                 seen.add(str(p))
                 try:
@@ -474,7 +489,10 @@ def vault_health(store) -> dict:
                     out["malformed"] += 1
                 if str(p) not in indexed_paths:
                     out["unindexed_files"] += 1
-        out["missing_files"] = len([p for p in indexed_paths if p not in seen])
+            if out["capped"]:
+                break
+        if not out["capped"]:
+            out["missing_files"] = len([p for p in indexed_paths if p not in seen])
     except Exception:  # noqa: BLE001
         logger.warning("vault_health degraded", exc_info=True)
     return out
