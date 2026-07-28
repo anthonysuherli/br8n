@@ -44,5 +44,12 @@ vectors, and re-embeds in the background from content it already has.
 quality dips until the drain finishes, then recovers — nothing is lost,
 because the text is canonical (in the DB and, on the vault tier, on disk).
 
+If the rebuild itself fails partway (a locked DB, a transient I/O error), the
+tool does not report success on a half-done switch: it rolls the setting back
+to whatever it was before the call, so the provider and the index stay
+consistent — never a persisted setting pointing at an index that was never
+actually rebuilt. That case also returns `ok: false`, with `fix` suggesting a
+retry or `python -m br8n.vault.reindex`.
+
 Do not tell the user local embeddings match the remote model's quality. They
 are a good keyless fallback; a configured key is still the better path.

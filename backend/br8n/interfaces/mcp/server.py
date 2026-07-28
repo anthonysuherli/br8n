@@ -697,7 +697,8 @@ def _embeddings_get_impl() -> dict:
 
 def _embeddings_set_impl(provider: str) -> dict:
     from br8n.clients import embed_local
-    from br8n.settings_file import save_setting
+    from br8n.clients.embeddings import active_embedder
+    from br8n.settings_file import load_settings, save_setting
     from br8n.store import active_backend, get_store
 
     if provider not in _VALID_EMBED_PROVIDERS:
@@ -722,7 +723,13 @@ def _embeddings_set_impl(provider: str) -> dict:
                 "fix": "pip install 'br8n[local-embeddings]'",
             }
 
+    # Captured BEFORE writing so a failed resync can revert exactly —
+    # including the no-setting-yet case, where the correct revert is
+    # "absent," not the literal string "auto" (save_setting(key, None) is how
+    # this module spells "remove the key").
+    previous = load_settings().get("embedding_provider")
     save_setting("embedding_provider", provider)
+
     if active_backend() == "local":
         # get_store() caches one store per db_path for the process lifetime
         # (the whole point — so a switch survives without an MCP server
@@ -731,7 +738,36 @@ def _embeddings_set_impl(provider: str) -> dict:
         # place — popping the cache would abandon an open sqlite connection —
         # so vec_findings/vec_kg_nodes actually resize and existing rows get
         # flagged needs_embed=1 before we report pending counts below.
-        get_store().resync_embedding_space()
+        store = get_store()
+        store.resync_embedding_space()
+
+        # resync_embedding_space (-> _sync_embedding_space) is best-effort by
+        # its own contract: it swallows exceptions and returns nothing, so a
+        # locked DB or a transient I/O error during the rebuild DDL degrades
+        # to a silent no-op from here. Reporting ok:True regardless would
+        # leave the setting persisted, the reported identity flipped, and the
+        # store still stamped at the OLD width — worse than not switching at
+        # all, since the next capture then hits the identical dimension
+        # mismatch. Verify the rebuild actually landed before claiming
+        # success; "none" has no target width to land on (that provider
+        # deliberately keeps whatever space already exists).
+        ident = active_embedder()
+        space = store.embedding_space()
+        landed = ident.provider == "none" or (
+            space is not None
+            and space["dim"] == ident.dim
+            and space["model"] == ident.model
+        )
+        if not landed:
+            save_setting("embedding_provider", previous)  # exact revert, not "auto"
+            return {
+                "ok": False,
+                "error": "the vector index could not be rebuilt; the switch "
+                         "was rolled back",
+                "fix": "retry the switch, or run `python -m br8n.vault.reindex` "
+                       "to rebuild the index from the vault",
+            }
+
     state = _embeddings_get_impl()
     if state["provider"] == "local":
         embed_local.warm_up()
@@ -761,7 +797,11 @@ def br8n_embeddings_set(provider: str) -> dict:
     store in place (resizes vec_findings/vec_kg_nodes and flags existing
     rows needs_embed=1 when the provider actually changed dim) and returns
     {ok: True, ...state, queued_rebuild} where queued_rebuild is how many
-    rows were just flagged and will re-embed in the background. Used by
+    rows were just flagged and will re-embed in the background. If the
+    resync itself fails (e.g. a locked DB during the rebuild DDL), the
+    switch is rolled back — the persisted setting reverts to its prior
+    value and this returns {ok: False, error, fix} instead of a false
+    success; `fix` names a retry or `python -m br8n.vault.reindex`. Used by
     /br8n:embeddings."""
     return _embeddings_set_impl(provider)
 

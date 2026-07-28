@@ -133,3 +133,51 @@ async def test_set_local_resyncs_the_live_store_and_prevents_dimension_mismatch(
           "confidence": 1.0, "tags": [], "provenance": [],
           "embedding": [0.1] * 384}]
     )
+
+
+async def test_set_rolls_back_when_the_resync_silently_degrades(monkeypatch):
+    """I1 (round 2): _sync_embedding_space is best-effort by contract — it
+    swallows exceptions and returns nothing observable. A caller that reports
+    ok:True regardless (e.g. after a locked DB / transient I/O error during
+    the DDL) leaves the setting persisted, the reported identity flipped, and
+    the store silently stuck at the OLD width — worse than not switching at
+    all, because the next capture crashes with a dimension mismatch exactly
+    as if I1 (round 1) had never been fixed. A failed resync must instead
+    report ok:False AND roll the persisted setting back to its previous
+    value, leaving the system exactly as usable as before the call."""
+    monkeypatch.setattr("br8n.clients.embeddings._creds_present", lambda: True)
+    monkeypatch.setattr("br8n.clients.embed_local.installed", lambda: True)
+    monkeypatch.setattr("br8n.clients.embed_local.warm_up", lambda: None)
+
+    from br8n.store import get_store
+
+    store = get_store()
+    org_id, pid = store.resolve_project("p", create=True)
+    kb_id = store.resolve_kb(org_id, pid, "k", create=True)
+    await store.insert_findings(
+        [{"kb_id": kb_id, "title": "t", "content": "c", "category": "note",
+          "confidence": 1.0, "tags": [], "provenance": [],
+          "embedding": [0.1] * 1536}]
+    )
+    assert store.embedding_space() == {
+        "provider": "remote", "model": "text-embedding-3-small", "dim": 1536
+    }
+    pre_settings = settings_file.load_settings()
+
+    # Model a locked DB / transient I/O error during the rebuild DDL: the
+    # resync silently no-ops instead of resizing the vec tables.
+    monkeypatch.setattr(store, "resync_embedding_space", lambda: None)
+
+    out = server._embeddings_set_impl("local")
+
+    assert out["ok"] is False
+    assert settings_file.load_settings() == pre_settings  # rolled back, not "auto"
+    # the store is left exactly as usable as before the call, not silently broken
+    assert store.embedding_space() == {
+        "provider": "remote", "model": "text-embedding-3-small", "dim": 1536
+    }
+    await store.insert_findings(
+        [{"kb_id": kb_id, "title": "t2", "content": "c2", "category": "note",
+          "confidence": 1.0, "tags": [], "provenance": [],
+          "embedding": [0.1] * 1536}]
+    )
