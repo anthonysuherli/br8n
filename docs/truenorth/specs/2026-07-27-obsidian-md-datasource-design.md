@@ -64,9 +64,9 @@ the vault from scratch — the architectural proof that the index is derived.
   journal/<year>/2026-07-27-<slug>.md                      canonical
   findings/<project>/<branch>/…       (explore results)    canonical
   views/                              regenerated; banner: "derived — edits won't stick"
-    synopsis/<project>-<branch>.md
+    synopsis/<project>/<branch>.md
     timeline/<project>-<branch>/{recent,week}.md
-    activity/…                        KG rollups, wikilinked (graph view)
+    activity/<project>/<branch>.md    KG rollups, wikilinked (graph view)
 ```
 
 Per-repo `.br8n/docs` and `.br8n/timeline` keep working unchanged (they are
