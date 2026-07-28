@@ -34,3 +34,38 @@ async def test_export_missing_is_idempotent(stores, tmp_path):
     path = store.vault_path_for(fid)
     assert path and "pre-vault" in open(path, encoding="utf-8").read()
     store.close()
+
+
+@pytest.mark.asyncio
+async def test_repeat_export_failures_are_capped(stores, tmp_path, caplog, monkeypatch):
+    """Permanently-failing rows must not emit one full warning+stack each on
+    every boot: first failure keeps the stack, the rest log at DEBUG behind
+    a single summary warning."""
+    import logging
+
+    from br8n.store.sqlite import SQLiteStore
+
+    legacy = SQLiteStore(str(tmp_path / "brain.db"))
+    org_id, pid = legacy.resolve_project("br8n", create=True)
+    kb_id = legacy.resolve_kb(org_id, pid, "main", create=True)
+    await legacy.insert_findings(
+        [{"kb_id": kb_id, "title": f"Old {i}", "content": "pre-vault",
+          "category": "snapshot", "confidence": 1.0, "tags": [],
+          "provenance": [], "embedding": None} for i in range(3)]
+    )
+    legacy.close()
+
+    from br8n.store.vault import VaultStore
+
+    def boom(self, fid):
+        raise OSError("read-only filesystem")
+
+    monkeypatch.setattr(VaultStore, "_write_canonical", boom)
+    with caplog.at_level(logging.WARNING, logger="br8n.vault.migrate"):
+        store = VaultStore(str(tmp_path / "brain.db"))
+    store.close()
+
+    warns = [r for r in caplog.records
+             if r.levelno == logging.WARNING and r.name == "br8n.vault.migrate"]
+    assert len(warns) == 2  # first failure with stack + one summary, not 3
+    assert any("3 rows failed" in r.getMessage() for r in warns)
