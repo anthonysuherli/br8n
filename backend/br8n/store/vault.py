@@ -192,38 +192,63 @@ class VaultStore(SQLiteStore):
             logger.debug("vault verify skipped for %s", finding_id, exc_info=True)
 
     async def _re_embed_stale(self) -> int:
-        """Embed rows edits marked stale. Self-heals keyless-capture rows too.
+        """Embed rows marked stale — findings, then KG nodes.
 
-        Claim-then-embed: stale ids are claimed in ``_re_embed_inflight``
-        before the (awaited) embedding call, so an overlapping read path on
-        this store never pays to embed the same rows twice.
+        Self-heals keyless-capture rows and refills BOTH vector spaces after an
+        embedding-space change (see ``SQLiteStore._sync_embedding_space``), so a
+        provider switch converges without user action.
         """
         if not embeddings_configured():
             return 0
+        return await self._re_embed_rows(
+            table="findings", vec_table="vec_findings",
+            vec_id_col="finding_id", text_col="content", claim_prefix="",
+        ) + await self._re_embed_rows(
+            table="kg_nodes", vec_table="vec_kg_nodes",
+            vec_id_col="node_id", text_col="label", claim_prefix="kg:",
+        )
+
+    async def _re_embed_rows(
+        self, *, table: str, vec_table: str, vec_id_col: str,
+        text_col: str, claim_prefix: str,
+    ) -> int:
+        """Drain one table's ``needs_embed`` rows into its vector table.
+
+        Claim-then-embed: ids are claimed in ``_re_embed_inflight`` before the
+        awaited embedding call, so an overlapping read path never pays to embed
+        the same rows twice. ``claim_prefix`` namespaces the two tables' ids so
+        a finding and a node can't collide on the same uuid.
+
+        The interpolated identifiers are module-internal constants, never user
+        input — values still go through placeholders.
+        """
         claimed: list = []
         try:
             cap = get_config().vault.re_embed_batch
             rows = self._conn.execute(
-                "SELECT id, content FROM findings WHERE needs_embed = 1 "
-                "AND content IS NOT NULL AND content != '' LIMIT ?;",
+                f"SELECT id, {text_col} AS text FROM {table} WHERE needs_embed = 1 "
+                f"AND {text_col} IS NOT NULL AND {text_col} != '' LIMIT ?;",
                 (cap,),
             ).fetchall()
-            rows = [r for r in rows if r["id"] not in self._re_embed_inflight]
+            rows = [
+                r for r in rows
+                if f"{claim_prefix}{r['id']}" not in self._re_embed_inflight
+            ]
             if not rows:
                 return 0
-            self._re_embed_inflight.update(r["id"] for r in rows)
+            self._re_embed_inflight.update(f"{claim_prefix}{r['id']}" for r in rows)
             claimed = rows
-            embeddings = await embed_batch([r["content"] for r in rows])
+            embeddings = await embed_batch([r["text"] for r in rows])
             for r, emb in zip(rows, embeddings):
                 self._conn.execute(
-                    "DELETE FROM vec_findings WHERE finding_id = ?;", (r["id"],)
+                    f"DELETE FROM {vec_table} WHERE {vec_id_col} = ?;", (r["id"],)
                 )
                 self._conn.execute(
-                    "INSERT INTO vec_findings (finding_id, embedding) VALUES (?, ?);",
+                    f"INSERT INTO {vec_table} ({vec_id_col}, embedding) VALUES (?, ?);",
                     (r["id"], serialize_float32(list(emb))),
                 )
                 self._conn.execute(
-                    "UPDATE findings SET needs_embed = 0 WHERE id = ?;", (r["id"],)
+                    f"UPDATE {table} SET needs_embed = 0 WHERE id = ?;", (r["id"],)
                 )
             self._conn.commit()
             return len(rows)
@@ -232,7 +257,9 @@ class VaultStore(SQLiteStore):
                 self._conn.rollback()  # never leave a write transaction open
             except Exception:
                 pass
-            logger.warning("re-embed pass degraded", exc_info=True)
+            logger.warning("re-embed pass degraded (%s)", table, exc_info=True)
             return 0
         finally:
-            self._re_embed_inflight.difference_update(r["id"] for r in claimed)
+            self._re_embed_inflight.difference_update(
+                f"{claim_prefix}{r['id']}" for r in claimed
+            )
